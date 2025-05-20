@@ -28,11 +28,18 @@ from django.contrib.auth.hashers import check_password
 from rest_framework.pagination import LimitOffsetPagination
 from django.contrib.postgres.search import TrigramSimilarity
 import secrets
+from django.db.models import Count, Sum
+import logging
+
+# Get the logger
+logger = logging.getLogger(__name__)
 
 # Create your views here.
 @api_view(['POST'])
 def Register(request):
     if request.method == 'POST':
+        logger.info("Register endpoint hit with POST method.")
+
         user_data = {
             "username": request.data.get("email"),
             "email": request.data.get("email"),
@@ -42,10 +49,13 @@ def Register(request):
             "last_name": request.data.get("lastname"),
         }
 
+        logger.debug(f"User data received: {user_data}")
+
         user_serializer = UserSerializer(data=user_data)
         
         if user_serializer.is_valid():
             try:
+                logger.info("User serializer is valid.")
                 email = user_serializer.validated_data['email'].lower()
                 username = user_serializer.validated_data['username'].lower()
                 firstname = user_serializer.validated_data['first_name']
@@ -53,7 +63,10 @@ def Register(request):
                 password = user_serializer.validated_data['password']
                 password2 = user_serializer.validated_data['password2']
 
+                logger.debug(f"Validated data - Email: {email}, Username: {username}")
+
                 if User.objects.filter(email=email).exists():
+                    logger.warning(f"Email already registered: {email}")
                     return Response({
                         "message": "Email Already Registered, Please Use A Different Email",
                         "errors": {"email": ["This email is already taken."]},
@@ -61,6 +74,7 @@ def Register(request):
                     })
 
                 if User.objects.filter(username=username).exists():
+                    logger.warning(f"Username already registered: {username}")
                     return Response({
                         "message": "Username Already Registered, Please Use A Different Username",
                         "errors": {"username": ["This username is already taken."]},
@@ -68,44 +82,50 @@ def Register(request):
                     })
 
                 if password != password2:
+                    logger.warning("Passwords do not match.")
                     return Response({
                         "message": "Passwords Didn't Match",
                         "errors": {"password": ["Passwords do not match."]},
                         "status": status.HTTP_400_BAD_REQUEST
                     })
 
-                # Generate a random 6-digit activation code
                 otp_code = ''.join(random.choices('0123456789', k=6))
+                logger.info(f"Generated OTP code: {otp_code}")
 
                 user = User.objects.create_user(username, email, password)
                 user.first_name = firstname.upper()
                 user.last_name = lastname.upper()
                 user.is_active = False
                 user.save()
+                logger.info(f"User created: {username}")
 
-                # Create the profile for the user
                 user_profile_data = {
                     "user": user.id,
                     "contact": request.data.get("contact"),
                     "role": request.data.get("role"),
-                    "otp_code": otp_code,  # Save the activation code
+                    "otp_code": otp_code,
                     "otp_created_at": timezone.now(),
                 }
+
+                logger.debug(f"User profile data: {user_profile_data}")
+
                 user_profile_serializer = RegisterUserProfileSerializer(data=user_profile_data)
 
                 if user_profile_serializer.is_valid():
                     contact = user_profile_serializer.validated_data['contact']
                     if UserProfile.objects.filter(contact=contact).exists():
+                        logger.warning(f"Contact already registered: {contact}")
                         user.delete()
                         return Response({
                             "message": "Contact/Telephone Number Already Registered, Please Use A Different Contact/Telephone Number",
                             "errors": {"contact": ["This contact is already registered."]},
                             "status": status.HTTP_400_BAD_REQUEST
                         })
-                    
+
                     user_profile_serializer.save()
+                    logger.info(f"UserProfile created for user: {username}")
                 else:
-                    # Rollback the user creation if profile creation fails
+                    logger.error(f"UserProfile serializer errors: {user_profile_serializer.errors}")
                     user.delete()
                     return Response({
                         "message": "Failed to create profile.",
@@ -113,56 +133,56 @@ def Register(request):
                         "status": status.HTTP_400_BAD_REQUEST
                     })
 
-                # Construct email messages
-                welcome_message = (
-                    f"Dear {firstname} {lastname},\n\n"
-                    f"Welcome to Dawa!\n\n"
-                    f"Please activate your account by entering your email ({email}) and the otp_code ({otp_code}).\n\n"
-                    f"For any assistance, our support team is here to help.\n\n"
-                    f"Thank you for choosing Dawa.\n\n"
-                    f"Warm regards,\n"
-                    "Dawa System Admin."
-                )
-
-                # Create EmailMessage instances
                 welcome_email = EmailMessage(
                     subject="Activate Your Dawa User Account Now",
-                    body=welcome_message,
+                    body=(
+                        f"Dear {firstname} {lastname},\n\n"
+                        f"Welcome to Dawa!\n\n"
+                        f"Please activate your account by entering your email ({email}) and the otp_code ({otp_code}).\n\n"
+                        f"For any assistance, our support team is here to help.\n\n"
+                        f"Thank you for choosing Dawa.\n\n"
+                        f"Warm regards,\n"
+                        "Dawa System Admin."
+                    ),
                     from_email=settings.EMAIL_HOST_USER,
                     to=[email]
                 )
                 welcome_email.send(fail_silently=False)
+                logger.info(f"Activation email sent to: {email}")
 
-                # Log the user registration
                 ActivityLog.objects.create(
                     user=user,
                     action=f"New user registered: {firstname.upper()} {lastname.upper()}.",
-                    ip_address = request.META.get('HTTP_X_FORWARDED_FOR', '').split(',')[0] or request.META.get('REMOTE_ADDR'),
+                    ip_address=request.META.get('HTTP_X_FORWARDED_FOR', '').split(',')[0] or request.META.get('REMOTE_ADDR'),
                     user_agent=request.META.get('HTTP_USER_AGENT')
                 )
+                logger.info(f"Activity log created for user: {username}")
 
                 return Response({
                     "message": f"User Account Created. OTP code sent to {email}.",
                     "status": status.HTTP_201_CREATED
                 })
             except Exception as e:
+                logger.exception("An unexpected error occurred during registration.")
                 return Response({
                     "message": "Failed To Create User Account.",
                     "errors": {"exception": [str(e)]},
                     "status": status.HTTP_500_INTERNAL_SERVER_ERROR
                 })
-        
-        # Return detailed validation errors
+
+        logger.error(f"User serializer invalid: {user_serializer.errors}")
         return Response({
             "message": "Invalid data provided.",
             "errors": user_serializer.errors,
             "status": status.HTTP_400_BAD_REQUEST
         })
 
+    logger.warning("Register endpoint hit with non-POST method.")
     return Response({
         "message": "Method not allowed",
         "status": status.HTTP_405_METHOD_NOT_ALLOWED
     })
+
 
 @api_view(['POST'])
 def GoogleLogin(request):
@@ -520,7 +540,7 @@ def GetShopProfile(request):
         profile_serializer = GetUserProfileSerializer(user_profile)
 
         # Fetch all items for counting purposes before slicing
-        all_items = Item.objects.filter(seller=user)
+        all_items = Item.objects.filter(seller=user, approval_status='Approved')
 
         # Get item counts from the full queryset (not the sliced one)
         total_items = all_items.count()
@@ -917,14 +937,14 @@ def GetCategoriesWithSubcategories(request):
 
         for category in categories:
             # Get the count of items in the category
-            category_item_count = Item.objects.filter(item_subcategory__subcategory_category=category).count()
+            category_item_count = Item.objects.filter(item_subcategory__subcategory_category=category, approval_status='Approved').count()
 
             subcategories = SubCategory.objects.filter(subcategory_category=category)
             subcategory_data = []
 
             for subcategory in subcategories:
                 # Get the count of items in the subcategory
-                subcategory_item_count = Item.objects.filter(item_subcategory=subcategory).count()
+                subcategory_item_count = Item.objects.filter(item_subcategory=subcategory, approval_status='Approved').count()
 
                 subcategory_data.append({
                     'id': subcategory.id,
@@ -950,6 +970,44 @@ def GetCategoriesWithSubcategories(request):
 def AddItem(request):
     data = request.data
     try:
+        # Validate required fields
+        required_fields = ['item_name', 'item_price', 'item_location', 'item_subcategory_id', 'item_description']
+        missing_fields = [field for field in required_fields if not data.get(field)]
+        
+        if missing_fields:
+            return Response({
+                "error": "Missing required fields",
+                "missing_fields": missing_fields,
+                "message": f"Please provide the following required fields: {', '.join(missing_fields)}",
+                "status": status.HTTP_400_BAD_REQUEST
+            })
+            
+        # Validate price is a positive number
+        try:
+            price = float(data.get('item_price'))
+            if price <= 0:
+                return Response({
+                    "error": "Invalid price",
+                    "message": "Price must be a positive number",
+                    "status": status.HTTP_400_BAD_REQUEST
+                })
+        except (ValueError, TypeError):
+            return Response({
+                "error": "Invalid price format",
+                "message": "Price must be a valid number",
+                "status": status.HTTP_400_BAD_REQUEST
+            })
+            
+        # Validate subcategory exists
+        try:
+            subcategory = SubCategory.objects.get(id=data.get('item_subcategory_id'))
+        except SubCategory.DoesNotExist:
+            return Response({
+                "error": "Invalid subcategory",
+                "message": "The specified subcategory does not exist",
+                "status": status.HTTP_400_BAD_REQUEST
+            })
+
         # Generate unique slug
         base_slug = slugify(data.get('item_name'))
         unique_slug = base_slug
@@ -973,29 +1031,103 @@ def AddItem(request):
 
         # Process images
         images = request.FILES.getlist('images')
-        if images:
-            for image_file in images:
+        if not images:
+            # Item created successfully but no images were provided
+            user_fullname = f"{request.user.first_name} {request.user.last_name}".strip() or request.user.username
+            
+            ActivityLog.objects.create(
+                user=request.user,
+                action=f"Added new item without images: {item.item_name} by {user_fullname}",
+                ip_address=request.META.get('HTTP_X_FORWARDED_FOR', '').split(',')[0] or request.META.get('REMOTE_ADDR'),
+                user_agent=request.META.get('HTTP_USER_AGENT')
+            )
+            
+            return Response({
+                "message": "Item created successfully, but no images were provided. Adding images is recommended.",
+                "item_id": item.id,
+                "status": status.HTTP_201_CREATED
+            })
+        
+        # Validate image formats
+        allowed_formats = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp']
+        max_size = 5 * 1024 * 1024  # 5MB
+        
+        failed_images = []
+        successful_images = 0
+        
+        for image_file in images:
+            try:
+                # Check file size
+                if image_file.size > max_size:
+                    failed_images.append({
+                        "name": image_file.name,
+                        "reason": f"File too large. Maximum size is 5MB. This file is {image_file.size / (1024 * 1024):.2f}MB"
+                    })
+                    continue
+                
+                # Check file format
+                if hasattr(image_file, 'content_type') and image_file.content_type not in allowed_formats:
+                    failed_images.append({
+                        "name": image_file.name,
+                        "reason": f"Unsupported file format: {image_file.content_type}. Allowed formats are JPEG, PNG, GIF, and WebP"
+                    })
+                    continue
+                
+                # Create the image
                 ItemImage.objects.create(item=item, image=image_file)
+                successful_images += 1
+                
+            except Exception as img_error:
+                failed_images.append({
+                    "name": image_file.name,
+                    "reason": f"Error processing image: {str(img_error)}"
+                })
 
         # Get the user's full name
-        user_fullname = f"{request.user.first_name} {request.user.last_name}".strip()
-        if not user_fullname:
-            user_fullname = request.user.username  # Fallback to username if full name is missing
+        user_fullname = f"{request.user.first_name} {request.user.last_name}".strip() or request.user.username
 
         # Log activity after the item is created
         ActivityLog.objects.create(
             user=request.user,
-            action=f"Added new item: {item.item_name} by {user_fullname}",
+            action=f"Added new item: {item.item_name} by {user_fullname} with {successful_images} images",
             ip_address=request.META.get('HTTP_X_FORWARDED_FOR', '').split(',')[0] or request.META.get('REMOTE_ADDR'),
             user_agent=request.META.get('HTTP_USER_AGENT')
         )
 
-        return Response({"message": "Item and images added successfully.", "status": status.HTTP_201_CREATED})
+        # Prepare response with details about uploaded images
+        response_data = {
+            "message": "Item added successfully.",
+            "item_id": item.id,
+            "images_uploaded": successful_images,
+            "status": status.HTTP_201_CREATED
+        }
+        
+        if failed_images:
+            response_data["failed_images"] = failed_images
+            response_data["message"] = f"Item added with {successful_images} image(s). {len(failed_images)} image(s) failed to upload."
+        
+        return Response(response_data)
 
     except UserProfile.DoesNotExist:
-        return Response({"error": "User profile not found. Please complete your profile.", "status": status.HTTP_404_NOT_FOUND})
+        return Response({
+            "error": "User profile not found",
+            "message": "Please complete your profile before posting items for sale.",
+            "status": status.HTTP_404_NOT_FOUND
+        })
     except Exception as e:
-        return Response({"error": str(e), "status": status.HTTP_400_BAD_REQUEST})
+        # If the item was created but images failed, make sure to delete the item
+        try:
+            if 'item' in locals():
+                item.delete()
+        except:
+            pass
+            
+        return Response({
+            "error": "Failed to create item",
+            "message": f"An error occurred: {str(e)}",
+            "details": str(e),
+            "status": status.HTTP_400_BAD_REQUEST
+        })
 
     
 @api_view(['PATCH'])
@@ -1131,7 +1263,7 @@ def GetItems(request):
         subcategory_id = request.data.get('subcategory_id', None)
 
         # Base queryset optimized with select_related & prefetch_related
-        items = Item.objects.filter(item_status='Available').select_related(
+        items = Item.objects.filter(item_status='Available', approval_status='Approved').select_related(
             'item_subcategory__subcategory_category'
         ).prefetch_related('images')
 
@@ -1158,7 +1290,7 @@ def GetItemDetails(request):
     try:
         # Fetch the specific item
         item_id = request.data.get('item_id')
-        item = get_object_or_404(Item, id=item_id)
+        item = get_object_or_404(Item, id=item_id, approval_status='Approved')
 
         # Fetch related subcategory and category
         subcategory = item.item_subcategory
@@ -1194,13 +1326,12 @@ def GetItemDetails(request):
 
         # Fetch similar items
         similar_items = Item.objects.filter(
-            item_subcategory=subcategory
-        ).exclude(id=item.id)[:5]  # Exclude the current item and limit to 5 items
+            item_subcategory=subcategory, approval_status='Approved'
+        ).exclude(id=item.id)[:5]
 
         if not similar_items.exists():
-            # If no items found in the same subcategory, fetch from the same category
             similar_items = Item.objects.filter(
-                item_subcategory__subcategory_category=category
+                item_subcategory__subcategory_category=category, approval_status='Approved'
             ).exclude(id=item.id)[:5]
 
         similar_items_data = [
@@ -1248,7 +1379,7 @@ def GetItemDetails(request):
 def GetItemsPromoted(request):
     try:
         # Fetch promoted items for the authenticated seller
-        items = Item.objects.filter(item_promoted=True)
+        items = Item.objects.filter(item_promoted=True, approval_status='Approved')
         item_data_list = []  # Initialize an empty list to hold item details
 
         for item in items:
@@ -1295,7 +1426,7 @@ def WishUnWish(request):
             return Response({"error": "Item ID is required.", "status": status.HTTP_400_BAD_REQUEST})
 
         # Check if the item exists in the database
-        item = get_object_or_404(Item, id=item_id)
+        item = get_object_or_404(Item, id=item_id, approval_status='Approved')
 
         # Get user full name or fallback to username
         user_fullname = f"{request.user.first_name} {request.user.last_name}".strip() or request.user.username
@@ -1357,7 +1488,7 @@ def GetUserWishlist(request):
         wishlist_entries = Wishlist.objects.filter(user=request.user, is_wished=True).select_related('item')
         
         # Serialize the items to return as a response
-        items = [entry.item for entry in wishlist_entries]
+        items = [entry.item for entry in wishlist_entries if entry.item.approval_status == 'Approved']
         serializer = WishlistSerializer(items, many=True)
 
         return Response({"wishlist": serializer.data, "status": status.HTTP_200_OK})
@@ -1753,9 +1884,9 @@ def SearchItems(request):
         items = Item.objects.annotate(
             similarity_name=TrigramSimilarity('item_name', query),
             similarity_desc=TrigramSimilarity('item_description', query)
-        ).filter(q_objects | Q(similarity_name__gt=0.3) | Q(similarity_desc__gt=0.3)).distinct()
+        ).filter((q_objects | Q(similarity_name__gt=0.3) | Q(similarity_desc__gt=0.3)) & Q(approval_status='Approved')).distinct()
     else:
-        items = Item.objects.all()
+        items = Item.objects.filter(approval_status='Approved')
 
     # Prepare the item data
     item_data_list = []
@@ -1791,6 +1922,610 @@ def SearchItems(request):
     )
 
     return Response({"search_query": search_query, "data": item_data_list, "status": status.HTTP_200_OK})
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def UpdateItemApprovalStatus(request):
+    """
+    Admin-only endpoint to approve or reject an item. Requires item_id, approval_status, and (if rejected) rejection_reason.
+    """
+    user = request.user
+    if not hasattr(user, 'userprofile') or user.userprofile.role != 'Admin':
+        return Response({"message": "You do not have permission to perform this action."}, status=403)
+
+    item_id = request.data.get('item_id')
+    approval_status = request.data.get('approval_status')  # 'Approved' or 'Rejected'
+    rejection_reason = request.data.get('rejection_reason', None)
+
+    if not item_id or approval_status not in ['Approved', 'Rejected']:
+        return Response({"message": "item_id and valid approval_status ('Approved' or 'Rejected') are required."}, status=400)
+
+    from .models import Item
+    try:
+        item = Item.objects.get(id=item_id)
+    except Item.DoesNotExist:
+        return Response({"message": "Item not found."}, status=404)
+
+    item.approval_status = approval_status
+    item.approved_by = user
+    if approval_status == 'Rejected':
+        if not rejection_reason:
+            return Response({"message": "rejection_reason is required when rejecting an item."}, status=400)
+        item.rejection_reason = rejection_reason
+    else:
+        item.rejection_reason = None
+    item.save()
+
+    # Log the action
+    from .models import ActivityLog
+    log_action = f"Item '{item.item_name}' set to {approval_status} by {user.get_full_name() or user.username}."
+    if approval_status == 'Rejected':
+        log_action += f" Reason: {rejection_reason}"
+    ActivityLog.objects.create(
+        user=user,
+        action=log_action,
+        ip_address=request.META.get('HTTP_X_FORWARDED_FOR', '').split(',')[0] or request.META.get('REMOTE_ADDR'),
+        user_agent=request.META.get('HTTP_USER_AGENT')
+    )
+
+    return Response({"message": f"Item approval status updated to {approval_status}.", "status": 200})
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def GetAllItemsAdmin(request):
+    user = request.user
+    if not hasattr(user, 'userprofile') or user.userprofile.role != 'Admin':
+        return Response({"message": "You do not have permission to perform this action."}, status=403)
+    items = Item.objects.all().select_related('seller', 'item_subcategory__subcategory_category', 'approved_by').prefetch_related('images')
+    # Use ItemSerializer or create a new serializer if you want more fields
+    serializer = ItemAdminSerializer(items, many=True)
+    return Response({"data": serializer.data, "status": 200})
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def GetItemDetailsAdmin(request):
+    user = request.user
+    if not hasattr(user, 'userprofile') or user.userprofile.role != 'Admin':
+        return Response({"message": "You do not have permission to perform this action."}, status=403)
+    item_id = request.query_params.get('item_id') or request.data.get('item_id')
+    if not item_id:
+        return Response({"message": "item_id is required."}, status=400)
+    try:
+        item = Item.objects.select_related('seller', 'item_subcategory__subcategory_category', 'approved_by').prefetch_related('images').get(id=item_id)
+    except Item.DoesNotExist:
+        return Response({"message": "Item not found."}, status=404)
+    serializer = ItemAdminSerializer(item)
+    return Response({"data": serializer.data, "status": 200})
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def GetAllUsersAdmin(request):
+    user = request.user
+    if not hasattr(user, 'userprofile') or user.userprofile.role != 'Admin':
+        return Response({"message": "You do not have permission to perform this action."}, status=403)
+    users = User.objects.all().select_related('userprofile')
+    data = []
+    for u in users:
+        profile = getattr(u, 'userprofile', None)
+        data.append({
+            'id': u.id,
+            'username': u.username,
+            'email': u.email,
+            'first_name': u.first_name,
+            'last_name': u.last_name,
+            'is_active': u.is_active,
+            'date_joined': u.date_joined,
+            'role': profile.role if profile else None,
+            'contact': profile.contact if profile else None,
+            'address': profile.address if profile else None,
+            'profile_picture': profile.profile_picture if profile else None,
+        })
+    return Response({"data": data, "status": 200})
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def ChangeUserRoleAdmin(request):
+    user = request.user
+    if not hasattr(user, 'userprofile') or user.userprofile.role != 'Admin':
+        return Response({"message": "You do not have permission to perform this action."}, status=403)
+    user_id = request.data.get('user_id')
+    new_role = request.data.get('role')
+    if not user_id or new_role not in ['Client', 'Vendor', 'Admin']:
+        return Response({"message": "user_id and valid role are required."}, status=400)
+    try:
+        target_user = User.objects.get(id=user_id)
+        profile = target_user.userprofile
+        profile.role = new_role
+        profile.save()
+        return Response({"message": f"User role updated to {new_role}.", "status": 200})
+    except User.DoesNotExist:
+        return Response({"message": "User not found."}, status=404)
+    except UserProfile.DoesNotExist:
+        return Response({"message": "User profile not found."}, status=404)
+
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def DeleteUserAdmin(request):
+    user = request.user
+    if not hasattr(user, 'userprofile') or user.userprofile.role != 'Admin':
+        return Response({"message": "You do not have permission to perform this action."}, status=403)
+    user_id = request.data.get('user_id')
+    if not user_id:
+        return Response({"message": "user_id is required."}, status=400)
+    try:
+        target_user = User.objects.get(id=user_id)
+        target_user.delete()
+        return Response({"message": "User deleted successfully.", "status": 200})
+    except User.DoesNotExist:
+        return Response({"message": "User not found."}, status=404)
+
+@api_view(['PATCH'])
+@permission_classes([IsAuthenticated])
+def UpdateUserAdmin(request):
+    user = request.user
+    if not hasattr(user, 'userprofile') or user.userprofile.role != 'Admin':
+        return Response({"message": "You do not have permission to perform this action."}, status=403)
+    user_id = request.data.get('user_id')
+    if not user_id:
+        return Response({"message": "user_id is required."}, status=400)
+    try:
+        target_user = User.objects.get(id=user_id)
+        profile = target_user.userprofile
+        # Update user fields
+        for field in ['username', 'email', 'first_name', 'last_name', 'is_active']:
+            if field in request.data:
+                setattr(target_user, field, request.data[field])
+        target_user.save()
+        # Update profile fields
+        for field in ['contact', 'address', 'profile_picture']:
+            if field in request.data:
+                setattr(profile, field, request.data[field])
+        profile.save()
+        return Response({"message": "User and profile updated successfully.", "status": 200})
+    except User.DoesNotExist:
+        return Response({"message": "User not found."}, status=404)
+    except UserProfile.DoesNotExist:
+        return Response({"message": "User profile not found."}, status=404)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def AdminDashboardStats(request):
+    user = request.user
+    if not hasattr(user, 'userprofile') or user.userprofile.role != 'Admin':
+        return Response({"message": "You do not have permission to perform this action."}, status=403)
+
+    # User roles
+    total_users = User.objects.count()
+    total_clients = UserProfile.objects.filter(role='Client').count()
+    total_vendors = UserProfile.objects.filter(role='Vendor').count()
+    total_admins = UserProfile.objects.filter(role='Admin').count()
+
+    # Items
+    total_items = Item.objects.count()
+    total_approved_items = Item.objects.filter(approval_status='Approved').count()
+    total_likes = Item.objects.aggregate(total=Sum('likes_count'))['total'] or 0
+    total_views = Item.objects.aggregate(total=Sum('views_count'))['total'] or 0
+    total_shares = Item.objects.aggregate(total=Sum('shares_count'))['total'] or 0
+
+    # Wishlist actions
+    total_wishlist_actions = Wishlist.objects.count()
+
+    # Reports
+    total_reports = ReportAbuse.objects.count()
+
+    # Subscribers
+    total_subscribers = NewsLetterSubcribers.objects.count()
+
+    return Response({
+        "total_users": total_users,
+        "total_admins": total_admins,
+        "total_vendors": total_vendors,
+        "total_clients": total_clients,
+        "total_items": total_items,
+        "total_approved_items": total_approved_items,
+        "total_likes": total_likes,
+        "total_views": total_views,
+        "total_shares": total_shares,
+        "total_wishlist_actions": total_wishlist_actions,
+        "total_reports": total_reports,
+        "total_subscribers": total_subscribers,
+        "status": 200
+    })
+
+# Category and Subcategory Admin Views
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def AddCategory(request):
+    user = request.user
+    if not hasattr(user, 'userprofile') or user.userprofile.role != 'Admin':
+        return Response({"message": "You do not have permission to perform this action."}, status=status.HTTP_403_FORBIDDEN)
+    
+    category_name = request.data.get('category_name')
+    if not category_name:
+        return Response({"message": "Category name is required."}, status=status.HTTP_400_BAD_REQUEST)
+    
+    # Check if category already exists
+    if Category.objects.filter(category_name__iexact=category_name).exists():
+        return Response({"message": "Category with this name already exists."}, status=status.HTTP_400_BAD_REQUEST)
+    
+    try:
+        category = Category.objects.create(category_name=category_name)
+        
+        # Log activity
+        ActivityLog.objects.create(
+            user=user,
+            action=f"Created new category: {category_name}",
+            ip_address=request.META.get('HTTP_X_FORWARDED_FOR', '').split(',')[0] or request.META.get('REMOTE_ADDR'),
+            user_agent=request.META.get('HTTP_USER_AGENT')
+        )
+        
+        return Response({
+            "message": "Category created successfully.",
+            "category": {
+                "id": category.id,
+                "category_name": category.category_name,
+                "created_at": category.created_at
+            },
+            "status": status.HTTP_201_CREATED
+        })
+    except Exception as e:
+        return Response({"message": f"Error creating category: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def GetAllCategories(request):
+    user = request.user
+    if not hasattr(user, 'userprofile') or user.userprofile.role != 'Admin':
+        return Response({"message": "You do not have permission to perform this action."}, status=status.HTTP_403_FORBIDDEN)
+    
+    categories = Category.objects.all().order_by('category_name')
+    categories_data = []
+    
+    for category in categories:
+        subcategory_count = SubCategory.objects.filter(subcategory_category=category).count()
+        item_count = Item.objects.filter(item_subcategory__subcategory_category=category).count()
+        
+        categories_data.append({
+            "id": category.id,
+            "category_name": category.category_name,
+            "subcategory_count": subcategory_count,
+            "item_count": item_count,
+            "created_at": category.created_at,
+            "updated_at": category.updated_at
+        })
+    
+    return Response({"data": categories_data, "status": status.HTTP_200_OK})
+
+@api_view(['PUT'])
+@permission_classes([IsAuthenticated])
+def UpdateCategory(request):
+    user = request.user
+    if not hasattr(user, 'userprofile') or user.userprofile.role != 'Admin':
+        return Response({"message": "You do not have permission to perform this action."}, status=status.HTTP_403_FORBIDDEN)
+    
+    category_id = request.data.get('category_id')
+    category_name = request.data.get('category_name')
+    
+    if not category_id or not category_name:
+        return Response({"message": "Category ID and name are required."}, status=status.HTTP_400_BAD_REQUEST)
+    
+    try:
+        category = Category.objects.get(id=category_id)
+        
+        # Check if another category with the same name exists
+        if Category.objects.filter(category_name__iexact=category_name).exclude(id=category_id).exists():
+            return Response({"message": "Another category with this name already exists."}, status=status.HTTP_400_BAD_REQUEST)
+        
+        old_name = category.category_name
+        category.category_name = category_name
+        category.save()
+        
+        # Log activity
+        ActivityLog.objects.create(
+            user=user,
+            action=f"Updated category from '{old_name}' to '{category_name}'",
+            ip_address=request.META.get('HTTP_X_FORWARDED_FOR', '').split(',')[0] or request.META.get('REMOTE_ADDR'),
+            user_agent=request.META.get('HTTP_USER_AGENT')
+        )
+        
+        return Response({
+            "message": "Category updated successfully.",
+            "category": {
+                "id": category.id,
+                "category_name": category.category_name,
+                "updated_at": category.updated_at
+            },
+            "status": status.HTTP_200_OK
+        })
+    except Category.DoesNotExist:
+        return Response({"message": "Category not found."}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({"message": f"Error updating category: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def DeleteCategory(request):
+    user = request.user
+    if not hasattr(user, 'userprofile') or user.userprofile.role != 'Admin':
+        return Response({"message": "You do not have permission to perform this action."}, status=status.HTTP_403_FORBIDDEN)
+    
+    category_id = request.data.get('category_id')
+    if not category_id:
+        return Response({"message": "Category ID is required."}, status=status.HTTP_400_BAD_REQUEST)
+    
+    try:
+        category = Category.objects.get(id=category_id)
+        
+        # Check if there are items associated with this category
+        items_count = Item.objects.filter(item_subcategory__subcategory_category=category).count()
+        if items_count > 0:
+            return Response({
+                "message": f"Cannot delete category. It has {items_count} items associated with it.",
+                "status": status.HTTP_400_BAD_REQUEST
+            })
+        
+        category_name = category.category_name
+        category.delete()
+        
+        # Log activity
+        ActivityLog.objects.create(
+            user=user,
+            action=f"Deleted category: {category_name}",
+            ip_address=request.META.get('HTTP_X_FORWARDED_FOR', '').split(',')[0] or request.META.get('REMOTE_ADDR'),
+            user_agent=request.META.get('HTTP_USER_AGENT')
+        )
+        
+        return Response({"message": "Category deleted successfully.", "status": status.HTTP_200_OK})
+    except Category.DoesNotExist:
+        return Response({"message": "Category not found."}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({"message": f"Error deleting category: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def AddSubcategory(request):
+    user = request.user
+    if not hasattr(user, 'userprofile') or user.userprofile.role != 'Admin':
+        return Response({"message": "You do not have permission to perform this action."}, status=status.HTTP_403_FORBIDDEN)
+    
+    subcategory_name = request.data.get('subcategory_name')
+    category_id = request.data.get('category_id')
+    
+    if not subcategory_name or not category_id:
+        return Response({"message": "Subcategory name and category ID are required."}, status=status.HTTP_400_BAD_REQUEST)
+    
+    # Check if subcategory already exists
+    if SubCategory.objects.filter(subcategory_name__iexact=subcategory_name).exists():
+        return Response({"message": "Subcategory with this name already exists."}, status=status.HTTP_400_BAD_REQUEST)
+    
+    try:
+        category = Category.objects.get(id=category_id)
+        subcategory = SubCategory.objects.create(
+            subcategory_name=subcategory_name,
+            subcategory_category=category
+        )
+        
+        # Log activity
+        ActivityLog.objects.create(
+            user=user,
+            action=f"Created new subcategory: {subcategory_name} under category: {category.category_name}",
+            ip_address=request.META.get('HTTP_X_FORWARDED_FOR', '').split(',')[0] or request.META.get('REMOTE_ADDR'),
+            user_agent=request.META.get('HTTP_USER_AGENT')
+        )
+        
+        return Response({
+            "message": "Subcategory created successfully.",
+            "subcategory": {
+                "id": subcategory.id,
+                "subcategory_name": subcategory.subcategory_name,
+                "category_name": category.category_name,
+                "created_at": subcategory.created_at
+            },
+            "status": status.HTTP_201_CREATED
+        })
+    except Category.DoesNotExist:
+        return Response({"message": "Category not found."}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({"message": f"Error creating subcategory: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def GetAllSubcategories(request):
+    user = request.user
+    if not hasattr(user, 'userprofile') or user.userprofile.role != 'Admin':
+        return Response({"message": "You do not have permission to perform this action."}, status=status.HTTP_403_FORBIDDEN)
+    
+    category_id = request.query_params.get('category_id')
+    
+    subcategories_query = SubCategory.objects.all()
+    if category_id:
+        subcategories_query = subcategories_query.filter(subcategory_category_id=category_id)
+    
+    subcategories = subcategories_query.select_related('subcategory_category').order_by('subcategory_name')
+    subcategories_data = []
+    
+    for subcategory in subcategories:
+        item_count = Item.objects.filter(item_subcategory=subcategory).count()
+        
+        subcategories_data.append({
+            "id": subcategory.id,
+            "subcategory_name": subcategory.subcategory_name,
+            "category": {
+                "id": subcategory.subcategory_category.id,
+                "category_name": subcategory.subcategory_category.category_name
+            },
+            "item_count": item_count,
+            "created_at": subcategory.created_at,
+            "updated_at": subcategory.updated_at
+        })
+    
+    return Response({"data": subcategories_data, "status": status.HTTP_200_OK})
+
+@api_view(['PUT'])
+@permission_classes([IsAuthenticated])
+def UpdateSubcategory(request):
+    user = request.user
+    if not hasattr(user, 'userprofile') or user.userprofile.role != 'Admin':
+        return Response({"message": "You do not have permission to perform this action."}, status=status.HTTP_403_FORBIDDEN)
+    
+    subcategory_id = request.data.get('subcategory_id')
+    subcategory_name = request.data.get('subcategory_name')
+    category_id = request.data.get('category_id')
+    
+    if not subcategory_id or not subcategory_name:
+        return Response({"message": "Subcategory ID and name are required."}, status=status.HTTP_400_BAD_REQUEST)
+    
+    try:
+        subcategory = SubCategory.objects.get(id=subcategory_id)
+        old_name = subcategory.subcategory_name
+        old_category = subcategory.subcategory_category
+        
+        # Check if another subcategory with the same name exists
+        if SubCategory.objects.filter(subcategory_name__iexact=subcategory_name).exclude(id=subcategory_id).exists():
+            return Response({"message": "Another subcategory with this name already exists."}, status=status.HTTP_400_BAD_REQUEST)
+        
+        subcategory.subcategory_name = subcategory_name
+        
+        # Update category if provided
+        if category_id:
+            try:
+                category = Category.objects.get(id=category_id)
+                subcategory.subcategory_category = category
+            except Category.DoesNotExist:
+                return Response({"message": "Category not found."}, status=status.HTTP_404_NOT_FOUND)
+        
+        subcategory.save()
+        
+        # Log activity
+        change_log = []
+        if old_name != subcategory_name:
+            change_log.append(f"name from '{old_name}' to '{subcategory_name}'")
+        
+        if category_id and old_category.id != int(category_id):
+            change_log.append(f"category from '{old_category.category_name}' to '{subcategory.subcategory_category.category_name}'")
+        
+        changes = ", ".join(change_log)
+        ActivityLog.objects.create(
+            user=user,
+            action=f"Updated subcategory: changed {changes}",
+            ip_address=request.META.get('HTTP_X_FORWARDED_FOR', '').split(',')[0] or request.META.get('REMOTE_ADDR'),
+            user_agent=request.META.get('HTTP_USER_AGENT')
+        )
+        
+        return Response({
+            "message": "Subcategory updated successfully.",
+            "subcategory": {
+                "id": subcategory.id,
+                "subcategory_name": subcategory.subcategory_name,
+                "category": {
+                    "id": subcategory.subcategory_category.id,
+                    "category_name": subcategory.subcategory_category.category_name
+                },
+                "updated_at": subcategory.updated_at
+            },
+            "status": status.HTTP_200_OK
+        })
+    except SubCategory.DoesNotExist:
+        return Response({"message": "Subcategory not found."}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({"message": f"Error updating subcategory: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def DeleteSubcategory(request):
+    user = request.user
+    if not hasattr(user, 'userprofile') or user.userprofile.role != 'Admin':
+        return Response({"message": "You do not have permission to perform this action."}, status=status.HTTP_403_FORBIDDEN)
+    
+    subcategory_id = request.data.get('subcategory_id')
+    if not subcategory_id:
+        return Response({"message": "Subcategory ID is required."}, status=status.HTTP_400_BAD_REQUEST)
+    
+    try:
+        subcategory = SubCategory.objects.get(id=subcategory_id)
+        
+        # Check if there are items associated with this subcategory
+        items_count = Item.objects.filter(item_subcategory=subcategory).count()
+        if items_count > 0:
+            return Response({
+                "message": f"Cannot delete subcategory. It has {items_count} items associated with it.",
+                "status": status.HTTP_400_BAD_REQUEST
+            })
+        
+        subcategory_name = subcategory.subcategory_name
+        category_name = subcategory.subcategory_category.category_name
+        subcategory.delete()
+        
+        # Log activity
+        ActivityLog.objects.create(
+            user=user,
+            action=f"Deleted subcategory: {subcategory_name} from category: {category_name}",
+            ip_address=request.META.get('HTTP_X_FORWARDED_FOR', '').split(',')[0] or request.META.get('REMOTE_ADDR'),
+            user_agent=request.META.get('HTTP_USER_AGENT')
+        )
+        
+        return Response({"message": "Subcategory deleted successfully.", "status": status.HTTP_200_OK})
+    except SubCategory.DoesNotExist:
+        return Response({"message": "Subcategory not found."}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({"message": f"Error deleting subcategory: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def UpdateItemPromotedStatus(request):
+    """
+    Admin-only endpoint to update the promoted status of an item.
+    Requires item_id and promoted_status (boolean).
+    """
+    user = request.user
+    if not hasattr(user, 'userprofile') or user.userprofile.role != 'Admin':
+        return Response({"message": "You do not have permission to perform this action."}, status=status.HTTP_403_FORBIDDEN)
+
+    item_id = request.data.get('item_id')
+    promoted_status = request.data.get('promoted_status')
+    
+    # Validate required parameters
+    if item_id is None:
+        return Response({"message": "item_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+    
+    if promoted_status is None:
+        return Response({"message": "promoted_status is required."}, status=status.HTTP_400_BAD_REQUEST)
+    
+    # Convert promoted_status to boolean if it's a string
+    if isinstance(promoted_status, str):
+        promoted_status = promoted_status.lower() == 'true'
+    
+    try:
+        item = Item.objects.get(id=item_id)
+        
+        # Update the promoted status
+        old_status = item.item_promoted
+        item.item_promoted = promoted_status
+        item.save()
+        
+        # Log the action
+        status_change = "promoted" if promoted_status else "unpromoted"
+        ActivityLog.objects.create(
+            user=user,
+            action=f"Admin {status_change} item: {item.item_name} (ID: {item.id})",
+            ip_address=request.META.get('HTTP_X_FORWARDED_FOR', '').split(',')[0] or request.META.get('REMOTE_ADDR'),
+            user_agent=request.META.get('HTTP_USER_AGENT')
+        )
+        
+        return Response({
+            "message": f"Item promotion status updated to {promoted_status}.",
+            "item": {
+                "id": item.id,
+                "name": item.item_name,
+                "promoted": item.item_promoted
+            },
+            "status": status.HTTP_200_OK
+        })
+        
+    except Item.DoesNotExist:
+        return Response({"message": "Item not found."}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({"message": f"Error updating item promotion status: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
 
 
 

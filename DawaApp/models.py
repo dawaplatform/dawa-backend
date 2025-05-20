@@ -1,6 +1,7 @@
 from django.db import models
 from django.contrib.auth.models import User
 import cloudinary.uploader
+from django.utils.text import slugify
 
 # Create your models here.
 class UserProfile(models.Model):
@@ -77,18 +78,44 @@ class Item(models.Model):
         ('Sold', 'Sold'),
     ]
 
-    seller = models.ForeignKey(User, on_delete=models.CASCADE)  # Link to the seller
+    APPROVAL_CHOICES = [
+        ('Pending', 'Pending'),
+        ('Approved', 'Approved'),
+        ('Rejected', 'Rejected'),
+    ]
+
+    seller = models.ForeignKey(User, on_delete=models.CASCADE)
     item_name = models.CharField(max_length=255)
-    item_price = models.DecimalField(max_digits=10, decimal_places=0)  # Adjust as needed
+    item_price = models.DecimalField(max_digits=10, decimal_places=0)
     item_location = models.CharField(max_length=255)
     item_negotiable = models.BooleanField(default=False)
     item_promoted = models.BooleanField(default=False)
-    slug = models.SlugField(unique=True)
-    item_subcategory = models.ForeignKey(SubCategory, on_delete=models.CASCADE)
+    slug = models.SlugField(unique=True, blank=True)
+    item_subcategory = models.ForeignKey('SubCategory', on_delete=models.CASCADE)
     item_status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='Available')
     item_description = models.TextField()
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    
+    # New Fields
+    approval_status = models.CharField(max_length=20, choices=APPROVAL_CHOICES, default='Pending', null=True, blank=True)
+    approved_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='approved_items')
+    rejection_reason = models.TextField(null=True, blank=True)
+    views_count = models.PositiveIntegerField(default=0, null=True, blank=True)
+    likes_count = models.PositiveIntegerField(default=0, null=True, blank=True)
+    shares_count = models.PositiveIntegerField(default=0, null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True, null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True, null=True, blank=True)
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            base_slug = slugify(self.item_name)
+            unique_slug = base_slug
+            num = 1
+            while Item.objects.filter(slug=unique_slug).exists():
+                unique_slug = f"{base_slug}-{num}"
+                num += 1
+            self.slug = unique_slug
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.item_name} by {self.seller.username}"

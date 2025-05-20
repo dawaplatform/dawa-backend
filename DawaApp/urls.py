@@ -39,4 +39,26 @@ urlpatterns = [
     path('getfaqs/', views.GetFAQs),
 
     path('searchitems/', views.SearchItems),
+
+    path('getallitemsadmin/', views.GetAllItemsAdmin),
+    path('getitemdetailsadmin/', views.GetItemDetailsAdmin),
+    path('updateitemapprovalstatus/', views.UpdateItemApprovalStatus),
+    path('getallusersadmin/', views.GetAllUsersAdmin),
+    path('changeuserroleadmin/', views.ChangeUserRoleAdmin),
+    path('deleteuseradmin/', views.DeleteUserAdmin),
+    path('updateuseradmin/', views.UpdateUserAdmin),
+    path('admindashboardstats/', views.AdminDashboardStats),
+    
+    # Category and Subcategory Admin URLs
+    path('categoryAdminAdd/', views.AddCategory),
+    path('categoryAdminGetAll/', views.GetAllCategories),
+    path('categoryAdminUpdate/', views.UpdateCategory),
+    path('categoryAdminDelete/', views.DeleteCategory),
+    path('subcategoryAdminAdd/', views.AddSubcategory),
+    path('subcategoryAdminGetAll/', views.GetAllSubcategories),
+    path('subcategoryAdminUpdate/', views.UpdateSubcategory),
+    path('subcategoryAdminDelete/', views.DeleteSubcategory),
+    
+    # Item Promotion Admin URL
+    path('updateItemPromotedStatus/', views.UpdateItemPromotedStatus),
 ]

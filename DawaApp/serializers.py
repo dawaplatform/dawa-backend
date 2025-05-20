@@ -47,7 +47,7 @@ class GetUserProfileSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = UserProfile
-        fields = ['id', 'user', 'contact', 'address', 'profile_picture', 'national_id_or_passport_number', 'national_id_or_passport_document']
+        fields = ['id', 'user', 'contact', 'address', 'profile_picture', 'national_id_or_passport_number', 'national_id_or_passport_document','role']
 
 class UpdateUserSerializer(serializers.ModelSerializer):
     class Meta:
@@ -120,3 +120,22 @@ class ItemSerializer(serializers.ModelSerializer):
             "item_status", "item_description", "subcategory", "category", "images",
             "created_at", "updated_at"
         ]
+
+class ItemAdminSerializer(serializers.ModelSerializer):
+    subcategory = serializers.CharField(source="item_subcategory.subcategory_name")
+    category = serializers.CharField(source="item_subcategory.subcategory_category.category_name")
+    images = ImageSerializer(many=True, read_only=True)
+    approved_by = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Item
+        fields = [
+            "id", "item_name", "item_price", "item_location", "item_negotiable",
+            "item_status", "item_description", "subcategory", "category", "images",
+            "item_promoted", "created_at", "updated_at", "approval_status", "approved_by", "rejection_reason"
+        ]
+
+    def get_approved_by(self, obj):
+        if obj.approved_by:
+            return f"{obj.approved_by.first_name} {obj.approved_by.last_name} ({obj.approved_by.email})"
+        return None
