@@ -84,6 +84,16 @@ class Item(models.Model):
         ('Rejected', 'Rejected'),
     ]
 
+    # Define choices for subscription packages
+    SUBSCRIPTION_CHOICES = [
+        ('Starter Package', 'Starter Package'),
+        ('Boost 7', 'Boost 7'),
+        ('Boost 30', 'Boost 30'),
+        ('Essential Plan', 'Essential Plan'),
+        ('Growth Plan', 'Growth Plan'),
+        ('Elite Plan', 'Elite Plan'),
+    ]
+
     seller = models.ForeignKey(User, on_delete=models.CASCADE)
     item_name = models.CharField(max_length=255)
     item_price = models.DecimalField(max_digits=10, decimal_places=0)
@@ -102,6 +112,13 @@ class Item(models.Model):
     views_count = models.PositiveIntegerField(default=0, null=True, blank=True)
     likes_count = models.PositiveIntegerField(default=0, null=True, blank=True)
     shares_count = models.PositiveIntegerField(default=0, null=True, blank=True)
+    # Add the new subscription package field
+    subscription_package = models.CharField(
+        max_length=50,
+        choices=SUBSCRIPTION_CHOICES,
+        null=True,
+        blank=True
+    )
 
     created_at = models.DateTimeField(auto_now_add=True, null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True, null=True, blank=True)

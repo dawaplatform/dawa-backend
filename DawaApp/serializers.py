@@ -132,7 +132,7 @@ class ItemAdminSerializer(serializers.ModelSerializer):
         fields = [
             "id", "item_name", "item_price", "item_location", "item_negotiable",
             "item_status", "item_description", "subcategory", "category", "images",
-            "item_promoted", "created_at", "updated_at", "approval_status", "approved_by", "rejection_reason"
+            "item_promoted", "subscription_package", "created_at", "updated_at", "approval_status", "approved_by", "rejection_reason"
         ]
 
     def get_approved_by(self, obj):

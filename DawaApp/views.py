@@ -2527,6 +2527,88 @@ def UpdateItemPromotedStatus(request):
     except Exception as e:
         return Response({"message": f"Error updating item promotion status: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
 
+@api_view(['GET'])
+def getPremiumSection(request):
+    """
+    Returns a paginated list of approved items on the Elite Plan subscription.
+    """
+    try:
+        items = Item.objects.filter(
+            approval_status='Approved',
+            subscription_package='Elite Plan'
+        ).select_related(
+            'item_subcategory__subcategory_category'
+        ).prefetch_related('images')
+
+        # Apply pagination
+        paginator = CustomPagination()
+        paginated_items = paginator.paginate_queryset(items, request)
+
+        # Serialize paginated items
+        serialized_items = ItemSerializer(paginated_items, many=True).data
+
+        return paginator.get_paginated_response({"data": serialized_items, "message": "Premium Section Items Fetched Successfully."})
+
+    except Exception as e:
+        return Response({"error": str(e), "message": "Error fetching premium section items."}, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['GET'])
+def getTrendingProducts(request):
+    """
+    Returns a paginated list of approved items with Boost 7, Boost 30, Essential Plan, or Growth Plan subscriptions.
+    """
+    try:
+        # Define the list of trending subscription packages
+        trending_packages = [
+            'Boost 7',
+            'Boost 30',
+            'Essential Plan',
+            'Growth Plan',
+        ]
+
+        items = Item.objects.filter(
+            approval_status='Approved',
+            subscription_package__in=trending_packages
+        ).select_related(
+            'item_subcategory__subcategory_category'
+        ).prefetch_related('images')
+
+        # Apply pagination
+        paginator = CustomPagination()
+        paginated_items = paginator.paginate_queryset(items, request)
+
+        # Serialize paginated items
+        serialized_items = ItemSerializer(paginated_items, many=True).data
+
+        return paginator.get_paginated_response({"data": serialized_items, "message": "Trending Products Fetched Successfully."})
+
+    except Exception as e:
+        return Response({"error": str(e), "message": "Error fetching trending products."}, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['GET'])
+def getProductListing(request):
+    """
+    Returns a paginated list of all approved items.
+    """
+    try:
+        items = Item.objects.filter(
+            approval_status='Approved'
+        ).select_related(
+            'item_subcategory__subcategory_category'
+        ).prefetch_related('images')
+
+        # Apply pagination
+        paginator = CustomPagination()
+        paginated_items = paginator.paginate_queryset(items, request)
+
+        # Serialize paginated items
+        serialized_items = ItemSerializer(paginated_items, many=True).data
+
+        return paginator.get_paginated_response({"data": serialized_items, "message": "Product Listing Fetched Successfully."})
+
+    except Exception as e:
+        return Response({"error": str(e), "message": "Error fetching product listing."}, status=status.HTTP_400_BAD_REQUEST)
+
 
 
 
