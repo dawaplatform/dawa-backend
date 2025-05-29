@@ -61,4 +61,9 @@ urlpatterns = [
     
     # Item Promotion Admin URL
     path('updateItemPromotedStatus/', views.UpdateItemPromotedStatus),
+
+    # New Item Listing Views
+    path('premiumitems/', views.getPremiumSection),
+    path('trendingitems/', views.getTrendingProducts),
+    path('productlisting/', views.getProductListing),
 ]
