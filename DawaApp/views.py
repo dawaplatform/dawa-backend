@@ -2572,6 +2572,7 @@ def getTrendingProducts(request):
             'Boost 30',
             'Essential Plan',
             'Growth Plan',
+            'Elite Plan',
         ]
 
         items = Item.objects.filter(

@@ -116,9 +116,9 @@ class ItemSerializer(serializers.ModelSerializer):
     class Meta:
         model = Item
         fields = [
-            "id", "item_name", "item_price", "item_location", "item_negotiable",
+             "id", "item_name", "item_price", "item_location", "item_negotiable",
             "item_status", "item_description", "subcategory", "category", "images",
-            "created_at", "updated_at"
+            "item_promoted", "subscription_package"
         ]
 
 class ItemAdminSerializer(serializers.ModelSerializer):
