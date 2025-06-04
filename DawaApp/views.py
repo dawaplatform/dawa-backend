@@ -2540,6 +2540,9 @@ def getPremiumSection(request):
             'item_subcategory__subcategory_category'
         ).prefetch_related('images')
 
+        # Log for debugging
+        print(f"Found {items.count()} premium items")
+        
         # Apply pagination
         paginator = CustomPagination()
         paginated_items = paginator.paginate_queryset(items, request)
@@ -2547,9 +2550,14 @@ def getPremiumSection(request):
         # Serialize paginated items
         serialized_items = ItemSerializer(paginated_items, many=True).data
 
-        return paginator.get_paginated_response({"data": serialized_items, "message": "Premium Section Items Fetched Successfully."})
+        return paginator.get_paginated_response({
+            "data": serialized_items, 
+            "message": "Premium Section Items Fetched Successfully.",
+            "count": items.count()
+        })
 
     except Exception as e:
+        print(f"Error in getPremiumSection: {str(e)}")
         return Response({"error": str(e), "message": "Error fetching premium section items."}, status=status.HTTP_400_BAD_REQUEST)
 
 @api_view(['GET'])
@@ -2573,6 +2581,9 @@ def getTrendingProducts(request):
             'item_subcategory__subcategory_category'
         ).prefetch_related('images')
 
+        # Log for debugging
+        print(f"Found {items.count()} trending items")
+        
         # Apply pagination
         paginator = CustomPagination()
         paginated_items = paginator.paginate_queryset(items, request)
@@ -2580,9 +2591,14 @@ def getTrendingProducts(request):
         # Serialize paginated items
         serialized_items = ItemSerializer(paginated_items, many=True).data
 
-        return paginator.get_paginated_response({"data": serialized_items, "message": "Trending Products Fetched Successfully."})
+        return paginator.get_paginated_response({
+            "data": serialized_items, 
+            "message": "Trending Products Fetched Successfully.",
+            "count": items.count()
+        })
 
     except Exception as e:
+        print(f"Error in getTrendingProducts: {str(e)}")
         return Response({"error": str(e), "message": "Error fetching trending products."}, status=status.HTTP_400_BAD_REQUEST)
 
 @api_view(['GET'])
@@ -2597,6 +2613,9 @@ def getProductListing(request):
             'item_subcategory__subcategory_category'
         ).prefetch_related('images')
 
+        # Log for debugging
+        print(f"Found {items.count()} items in product listing")
+        
         # Apply pagination
         paginator = CustomPagination()
         paginated_items = paginator.paginate_queryset(items, request)
@@ -2604,10 +2623,186 @@ def getProductListing(request):
         # Serialize paginated items
         serialized_items = ItemSerializer(paginated_items, many=True).data
 
-        return paginator.get_paginated_response({"data": serialized_items, "message": "Product Listing Fetched Successfully."})
+        return paginator.get_paginated_response({
+            "data": serialized_items, 
+            "message": "Product Listing Fetched Successfully.",
+            "count": items.count()
+        })
 
     except Exception as e:
+        print(f"Error in getProductListing: {str(e)}")
         return Response({"error": str(e), "message": "Error fetching product listing."}, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def updateItemSubscription(request):
+    """
+    Admin-only endpoint to update subscription package for an item or multiple items.
+    """
+    user = request.user
+    if not hasattr(user, 'userprofile') or user.userprofile.role != 'Admin':
+        return Response({"message": "You do not have permission to perform this action."}, status=status.HTTP_403_FORBIDDEN)
+
+    item_id = request.data.get('item_id')
+    subscription_package = request.data.get('subscription_package')
+    update_all = request.data.get('update_all', False)
+    
+    # Validate input
+    if not subscription_package:
+        return Response({"message": "subscription_package is required."}, status=status.HTTP_400_BAD_REQUEST)
+    
+    # Validate package name
+    valid_packages = [
+        'Starter Package',
+        'Boost 7',
+        'Boost 30',
+        'Essential Plan',
+        'Growth Plan',
+        'Elite Plan',
+    ]
+    
+    if subscription_package not in valid_packages:
+        return Response({
+            "message": f"Invalid subscription package. Valid options are: {', '.join(valid_packages)}"
+        }, status=status.HTTP_400_BAD_REQUEST)
+    
+    try:
+        if update_all:
+            # Update multiple items based on query params
+            category_id = request.data.get('category_id')
+            subcategory_id = request.data.get('subcategory_id')
+            min_price = request.data.get('min_price')
+            max_price = request.data.get('max_price')
+            
+            # Start with all items
+            items_query = Item.objects.all()
+            
+            # Apply filters if provided
+            if category_id:
+                items_query = items_query.filter(item_subcategory__subcategory_category_id=category_id)
+            if subcategory_id:
+                items_query = items_query.filter(item_subcategory_id=subcategory_id)
+            if min_price:
+                items_query = items_query.filter(item_price__gte=min_price)
+            if max_price:
+                items_query = items_query.filter(item_price__lte=max_price)
+            
+            # Update the subscription package for all matching items
+            count = items_query.update(subscription_package=subscription_package)
+            
+            return Response({
+                "message": f"Updated subscription package to '{subscription_package}' for {count} items.",
+                "count": count,
+                "status": status.HTTP_200_OK
+            })
+        else:
+            # Update a single item
+            if not item_id:
+                return Response({"message": "item_id is required when not using update_all."}, status=status.HTTP_400_BAD_REQUEST)
+            
+            item = Item.objects.get(id=item_id)
+            old_package = item.subscription_package
+            item.subscription_package = subscription_package
+            item.save()
+            
+            return Response({
+                "message": f"Updated subscription package from '{old_package or 'None'}' to '{subscription_package}' for item: {item.item_name}",
+                "item": {
+                    "id": item.id,
+                    "name": item.item_name,
+                    "subscription_package": item.subscription_package
+                },
+                "status": status.HTTP_200_OK
+            })
+    except Item.DoesNotExist:
+        return Response({"message": "Item not found."}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({"message": f"Error updating subscription package: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['GET'])
+def getSubscriptionStats(request):
+    """
+    Returns statistics about items and their subscription packages.
+    """
+    try:
+        from django.db.models import Count, Q
+        
+        total_items = Item.objects.count()
+        approved_items = Item.objects.filter(approval_status='Approved').count()
+        
+        # Count items by subscription package
+        subscription_counts = {}
+        
+        # First add all possible packages with zero counts
+        valid_packages = [
+            'Starter Package',
+            'Boost 7',
+            'Boost 30',
+            'Essential Plan',
+            'Growth Plan',
+            'Elite Plan',
+        ]
+        
+        for package in valid_packages:
+            subscription_counts[package] = 0
+        
+        # Add null/empty package
+        subscription_counts['No Package'] = 0
+        
+        # Now get actual counts
+        package_stats = Item.objects.values('subscription_package').annotate(
+            count=Count('id')
+        )
+        
+        for stat in package_stats:
+            package = stat['subscription_package'] or 'No Package'
+            subscription_counts[package] = stat['count']
+        
+        # Count items with no subscription package
+        null_package_count = Item.objects.filter(
+            subscription_package__isnull=True
+        ).count()
+        
+        empty_package_count = Item.objects.filter(
+            subscription_package=''
+        ).count()
+        
+        # Add to "No Package" count
+        subscription_counts['No Package'] += null_package_count + empty_package_count
+        
+        # Get the first 5 items for each package for sample viewing
+        sample_items = {}
+        for package in valid_packages + ['No Package']:
+            if package == 'No Package':
+                items = Item.objects.filter(
+                    Q(subscription_package__isnull=True) | Q(subscription_package='')
+                )[:5]
+            else:
+                items = Item.objects.filter(subscription_package=package)[:5]
+            
+            sample_items[package] = [
+                {
+                    'id': item.id,
+                    'name': item.item_name,
+                    'approval_status': item.approval_status,
+                    'subscription_package': item.subscription_package
+                }
+                for item in items
+            ]
+        
+        return Response({
+            "total_items": total_items,
+            "approved_items": approved_items,
+            "subscription_counts": subscription_counts,
+            "sample_items": sample_items,
+            "null_package_count": null_package_count,
+            "empty_package_count": empty_package_count,
+            "status": status.HTTP_200_OK
+        })
+        
+    except Exception as e:
+        print(f"Error in getSubscriptionStats: {str(e)}")
+        return Response({"error": str(e), "message": "Error fetching subscription statistics."}, status=status.HTTP_400_BAD_REQUEST)
 
 
 

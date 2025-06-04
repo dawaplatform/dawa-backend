@@ -66,4 +66,8 @@ urlpatterns = [
     path('premiumitems/', views.getPremiumSection),
     path('trendingitems/', views.getTrendingProducts),
     path('productlisting/', views.getProductListing),
+    
+    # Subscription management
+    path('updateitemsubscription/', views.updateItemSubscription),
+    path('subscriptionstats/', views.getSubscriptionStats),
 ]
