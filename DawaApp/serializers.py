@@ -126,11 +126,11 @@ class ItemAdminSerializer(serializers.ModelSerializer):
     category = serializers.CharField(source="item_subcategory.subcategory_category.category_name")
     images = ImageSerializer(many=True, read_only=True)
     approved_by = serializers.SerializerMethodField()
-
+    seller = serializers.SerializerMethodField()
     class Meta:
         model = Item
         fields = [
-            "id", "item_name", "item_price", "item_location", "item_negotiable",
+            "id", "item_name", "item_price", "item_location", "item_negotiable","seller",
             "item_status", "item_description", "subcategory", "category", "images",
             "item_promoted", "subscription_package", "created_at", "updated_at", "approval_status", "approved_by", "rejection_reason"
         ]
@@ -138,4 +138,9 @@ class ItemAdminSerializer(serializers.ModelSerializer):
     def get_approved_by(self, obj):
         if obj.approved_by:
             return f"{obj.approved_by.first_name} {obj.approved_by.last_name} ({obj.approved_by.email})"
+        return None
+
+    def get_seller(self, obj):
+        if obj.seller:
+            return f"{obj.seller.first_name} {obj.seller.last_name} ({obj.seller.email})"
         return None

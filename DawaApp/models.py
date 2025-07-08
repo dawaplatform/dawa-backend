@@ -104,7 +104,7 @@ class Item(models.Model):
     item_subcategory = models.ForeignKey('SubCategory', on_delete=models.CASCADE)
     item_status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='Available')
     item_description = models.TextField()
-    
+
     # New Fields
     approval_status = models.CharField(max_length=20, choices=APPROVAL_CHOICES, default='Pending', null=True, blank=True)
     approved_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='approved_items')
