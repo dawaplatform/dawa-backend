@@ -12,7 +12,7 @@ class CategoryAdmin(admin.ModelAdmin):
 
 @admin.register(SubCategory)
 class SubCategoryAdmin(admin.ModelAdmin):
-    list_display = ('subcategory_name', 'subcategory_category', 'created_at', 'updated_at')
+    list_display = ('subcategory_name', 'subcategory_category', 'created_at', 'updated_at','metadata')
     list_filter = ('subcategory_category',)  # Enables filtering by Category
     search_fields = ('subcategory_name', 'subcategory_category__category_name')  # Allows searching by subcategory and category name
     ordering = ('subcategory_category', 'subcategory_name')  # Sort by Category, then SubCategory
@@ -24,7 +24,7 @@ class ItemImageInline(admin.TabularInline):  # or admin.StackedInline
 @admin.register(Item)
 class ItemAdmin(admin.ModelAdmin):
     inlines = [ItemImageInline]
-    list_display = ['item_name', 'item_price', 'item_status', 'created_at', 'updated_at']
+    list_display = ['item_name', 'item_price', 'item_status', 'created_at', 'updated_at','metadata']
     list_filter = ['item_status']  # Add filter options for statuses
     search_fields = ['item_name', 'item_description']
 

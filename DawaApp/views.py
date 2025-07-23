@@ -1375,6 +1375,7 @@ def GetItemDetails(request):
                 "image": similar_item.images.first().image if similar_item.images.exists() else None,
                 "created_at": similar_item.created_at,
                 "updated_at": similar_item.updated_at,
+                "metadata": similar_item.metadata if hasattr(similar_item, 'metadata') else None,
             }
             for similar_item in similar_items
         ]
@@ -1396,6 +1397,7 @@ def GetItemDetails(request):
             "seller": seller_details,  # Include seller details
             "reviews": reviews_data,  # Include all reviews for the item
             "similar_items": similar_items_data,  # Include similar items
+            "metadata": item.metadata if hasattr(item, 'metadata') else None,  # Add metadata field
         }
 
         return Response({"data": item_data, "status": status.HTTP_200_OK})
@@ -2022,7 +2024,10 @@ def GetItemDetailsAdmin(request):
     except Item.DoesNotExist:
         return Response({"message": "Item not found."}, status=404)
     serializer = ItemAdminSerializer(item)
-    return Response({"data": serializer.data, "status": 200})
+    # Add metadata field to the response
+    data = serializer.data
+    data['metadata'] = item.metadata if hasattr(item, 'metadata') else None
+    return Response({"data": data, "status": 200})
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])

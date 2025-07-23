@@ -118,7 +118,7 @@ class ItemSerializer(serializers.ModelSerializer):
         fields = [
              "id", "item_name", "item_price", "item_location", "item_negotiable",
             "item_status", "item_description", "subcategory", "category", "images",
-            "item_promoted", "subscription_package"
+            "item_promoted", "subscription_package","metadata"
         ]
 
 class ItemAdminSerializer(serializers.ModelSerializer):
@@ -131,7 +131,7 @@ class ItemAdminSerializer(serializers.ModelSerializer):
         model = Item
         fields = [
             "id", "item_name", "item_price", "item_location", "item_negotiable","seller",
-            "item_status", "item_description", "subcategory", "category", "images",
+            "item_status", "item_description", "subcategory", "category", "images","metadata",
             "item_promoted", "subscription_package", "created_at", "updated_at", "approval_status", "approved_by", "rejection_reason"
         ]
 
