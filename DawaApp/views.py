@@ -976,7 +976,8 @@ def GetCategoriesWithSubcategories(request):
                 subcategory_data.append({
                     'id': subcategory.id,
                     'subcategory_name': subcategory.subcategory_name,
-                    'subcategory_item_count': subcategory_item_count
+                    'subcategory_item_count': subcategory_item_count,
+                    'metadata': subcategory.metadata
                 })
 
             result.append({
