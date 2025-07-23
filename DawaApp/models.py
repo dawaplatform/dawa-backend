@@ -66,6 +66,7 @@ class Category(models.Model):
 class SubCategory(models.Model):
     subcategory_name = models.CharField(max_length=50, unique=True)
     subcategory_category = models.ForeignKey(Category, on_delete=models.CASCADE)
+    metadata = models.JSONField(null=True, blank=True)  # Optional metadata field
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

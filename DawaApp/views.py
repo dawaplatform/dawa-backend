@@ -470,16 +470,37 @@ def GetUserProfile(request):
     except Exception as e:
         return Response({"message": "An error occurred", "details": str(e), "status": status.HTTP_500_INTERNAL_SERVER_ERROR})
 
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@api_view(['POST'])
 def GetMyShopProfile(request):
+    """
+    Returns the shop profile and items for a given user_id (seller).
+    Only the shop owner (authenticated user whose id matches user_id) can access all items.
+    If the user_id does not match the authenticated user, return 403 Forbidden.
+    Expects: { "user_id": <int> } in POST body.
+    """
     try:
-        # Fetch user profile
-        user_profile = get_object_or_404(UserProfile, user=request.user)
+        # Ensure user_id is provided in the request data
+        seller_id = request.data.get('user_id')
+        if not seller_id:
+            return Response(
+                {"message": "user_id is required", "status": status.HTTP_400_BAD_REQUEST},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Check if the requesting user is the shop owner
+        if not request.user.is_authenticated or int(seller_id) != request.user.id:
+            return Response(
+                {"message": "You are not authorized to access this shop profile.", "status": status.HTTP_403_FORBIDDEN},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Fetch the seller user and profile
+        seller = get_object_or_404(User, id=seller_id)
+        user_profile = get_object_or_404(UserProfile, user=seller)
         profile_serializer = GetUserProfileSerializer(user_profile)
 
-        # Fetch all items for counting purposes before slicing
-        all_items = Item.objects.filter(seller=request.user)
+        # Only the owner can access this endpoint, so show all items
+        all_items = Item.objects.filter(seller_id=seller_id)
 
         # Get item counts from the full queryset (not the sliced one)
         total_items = all_items.count()
@@ -511,6 +532,7 @@ def GetMyShopProfile(request):
                 "images": images,
                 "created_at": item.created_at,
                 "updated_at": item.updated_at,
+                "approval_status": item.approval_status,
             }
 
             # Append item data to the list
@@ -527,9 +549,14 @@ def GetMyShopProfile(request):
             },
             "status": status.HTTP_200_OK,
         }
-        return Response({'data': response_data, 'status': status.HTTP_200_OK})
+        return Response({'data': response_data, 'status': status.HTTP_200_OK}, status=status.HTTP_200_OK)
     except Exception as e:
-        return Response({"message": "An error occurred", "details": str(e), "status": status.HTTP_500_INTERNAL_SERVER_ERROR})
+        # If the user is not authenticated, DRF will return 401 automatically.
+        # For other errors, return 500.
+        return Response(
+            {"message": "An error occurred", "details": str(e), "status": status.HTTP_500_INTERNAL_SERVER_ERROR},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
 
 @api_view(['POST'])
 def GetShopProfile(request):
@@ -539,7 +566,7 @@ def GetShopProfile(request):
         user_profile = get_object_or_404(UserProfile, user=user)
         profile_serializer = GetUserProfileSerializer(user_profile)
 
-        # Fetch all items for counting purposes before slicing
+        # For public shop profile, only show approved items
         all_items = Item.objects.filter(seller=user, approval_status='Approved')
 
         # Get item counts from the full queryset (not the sliced one)
@@ -2290,6 +2317,7 @@ def AddSubcategory(request):
     
     subcategory_name = request.data.get('subcategory_name')
     category_id = request.data.get('category_id')
+    metadata = request.data.get('metadata', None)  # Optional metadata field
     
     if not subcategory_name or not category_id:
         return Response({"message": "Subcategory name and category ID are required."}, status=status.HTTP_400_BAD_REQUEST)
@@ -2302,7 +2330,8 @@ def AddSubcategory(request):
         category = Category.objects.get(id=category_id)
         subcategory = SubCategory.objects.create(
             subcategory_name=subcategory_name,
-            subcategory_category=category
+            subcategory_category=category,
+            metadata=metadata if metadata is not None else None
         )
         
         # Log activity
@@ -2319,6 +2348,7 @@ def AddSubcategory(request):
                 "id": subcategory.id,
                 "subcategory_name": subcategory.subcategory_name,
                 "category_name": category.category_name,
+                "metadata": subcategory.metadata,
                 "created_at": subcategory.created_at
             },
             "status": status.HTTP_201_CREATED
@@ -2354,6 +2384,7 @@ def GetAllSubcategories(request):
                 "id": subcategory.subcategory_category.id,
                 "category_name": subcategory.subcategory_category.category_name
             },
+            "metadata": subcategory.metadata,  # Add metadata to the response
             "item_count": item_count,
             "created_at": subcategory.created_at,
             "updated_at": subcategory.updated_at
@@ -2371,6 +2402,7 @@ def UpdateSubcategory(request):
     subcategory_id = request.data.get('subcategory_id')
     subcategory_name = request.data.get('subcategory_name')
     category_id = request.data.get('category_id')
+    metadata = request.data.get('metadata')  # New: get metadata from request
     
     if not subcategory_id or not subcategory_name:
         return Response({"message": "Subcategory ID and name are required."}, status=status.HTTP_400_BAD_REQUEST)
@@ -2379,7 +2411,8 @@ def UpdateSubcategory(request):
         subcategory = SubCategory.objects.get(id=subcategory_id)
         old_name = subcategory.subcategory_name
         old_category = subcategory.subcategory_category
-        
+        old_metadata = subcategory.metadata
+
         # Check if another subcategory with the same name exists
         if SubCategory.objects.filter(subcategory_name__iexact=subcategory_name).exclude(id=subcategory_id).exists():
             return Response({"message": "Another subcategory with this name already exists."}, status=status.HTTP_400_BAD_REQUEST)
@@ -2394,6 +2427,10 @@ def UpdateSubcategory(request):
             except Category.DoesNotExist:
                 return Response({"message": "Category not found."}, status=status.HTTP_404_NOT_FOUND)
         
+        # Update metadata if provided
+        if metadata is not None:
+            subcategory.metadata = metadata
+
         subcategory.save()
         
         # Log activity
@@ -2404,7 +2441,10 @@ def UpdateSubcategory(request):
         if category_id and old_category.id != int(category_id):
             change_log.append(f"category from '{old_category.category_name}' to '{subcategory.subcategory_category.category_name}'")
         
-        changes = ", ".join(change_log)
+        if metadata is not None and old_metadata != metadata:
+            change_log.append(f"metadata from '{old_metadata}' to '{metadata}'")
+        
+        changes = ", ".join(change_log) if change_log else "no changes"
         ActivityLog.objects.create(
             user=user,
             action=f"Updated subcategory: changed {changes}",
@@ -2421,6 +2461,7 @@ def UpdateSubcategory(request):
                     "id": subcategory.subcategory_category.id,
                     "category_name": subcategory.subcategory_category.category_name
                 },
+                "metadata": subcategory.metadata,  # Include metadata in response
                 "updated_at": subcategory.updated_at
             },
             "status": status.HTTP_200_OK
