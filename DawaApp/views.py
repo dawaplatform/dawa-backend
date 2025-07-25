@@ -1036,6 +1036,18 @@ def AddItem(request):
                 "status": status.HTTP_400_BAD_REQUEST
             })
 
+        # Handle metadata (optional field)
+        metadata = data.get('metadata', None)
+        # If you want to ensure it's a dict, try to parse JSON if it's a string
+        import json
+        if metadata:
+            if isinstance(metadata, str):
+                try:
+                    metadata = json.loads(metadata)
+                except Exception:
+                    # If not valid JSON, just store as string
+                    pass
+
         # Generate unique slug
         base_slug = slugify(data.get('item_name'))
         unique_slug = base_slug
@@ -1044,7 +1056,7 @@ def AddItem(request):
             unique_slug = f"{base_slug}-{counter}"
             counter += 1
 
-        # Create the item
+        # Create the item, now with metadata
         item = Item.objects.create(
             seller=request.user,
             item_name=data.get('item_name'),
@@ -1055,6 +1067,7 @@ def AddItem(request):
             item_subcategory_id=data.get('item_subcategory_id'),
             item_status=data.get('item_status', 'Available'),
             item_description=data.get('item_description'),
+            metadata=metadata if metadata else None,
         )
 
         # Process images
