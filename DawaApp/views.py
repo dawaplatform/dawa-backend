@@ -977,13 +977,15 @@ def GetCategoriesWithSubcategories(request):
                     'id': subcategory.id,
                     'subcategory_name': subcategory.subcategory_name,
                     'subcategory_item_count': subcategory_item_count,
-                    'metadata': subcategory.metadata
+                    'metadata': subcategory.metadata,
+                    'image_url': subcategory.image_url,  # Add image_url for subcategory
                 })
 
             result.append({
                 'id': category.id,
                 'category_name': category.category_name,
                 'category_item_count': category_item_count,
+                'image_url': category.image_url,  # Add image_url for category
                 'subcategories': subcategory_data
             })
 
@@ -2187,6 +2189,8 @@ def AddCategory(request):
         return Response({"message": "You do not have permission to perform this action."}, status=status.HTTP_403_FORBIDDEN)
     
     category_name = request.data.get('category_name')
+    image_url = request.data.get('image_url')  # New field for image_url
+
     if not category_name:
         return Response({"message": "Category name is required."}, status=status.HTTP_400_BAD_REQUEST)
     
@@ -2195,7 +2199,10 @@ def AddCategory(request):
         return Response({"message": "Category with this name already exists."}, status=status.HTTP_400_BAD_REQUEST)
     
     try:
-        category = Category.objects.create(category_name=category_name)
+        category = Category.objects.create(
+            category_name=category_name,
+            image_url=image_url  # Save image_url if provided
+        )
         
         # Log activity
         ActivityLog.objects.create(
@@ -2210,6 +2217,7 @@ def AddCategory(request):
             "category": {
                 "id": category.id,
                 "category_name": category.category_name,
+                "image_url": category.image_url,  # Include image_url in response
                 "created_at": category.created_at
             },
             "status": status.HTTP_201_CREATED
@@ -2234,6 +2242,7 @@ def GetAllCategories(request):
         categories_data.append({
             "id": category.id,
             "category_name": category.category_name,
+            "image_url": category.image_url,  # Added image_url field
             "subcategory_count": subcategory_count,
             "item_count": item_count,
             "created_at": category.created_at,
@@ -2251,6 +2260,7 @@ def UpdateCategory(request):
     
     category_id = request.data.get('category_id')
     category_name = request.data.get('category_name')
+    image_url = request.data.get('image_url', None)  # Add image_url field (optional)
     
     if not category_id or not category_name:
         return Response({"message": "Category ID and name are required."}, status=status.HTTP_400_BAD_REQUEST)
@@ -2264,6 +2274,8 @@ def UpdateCategory(request):
         
         old_name = category.category_name
         category.category_name = category_name
+        if image_url is not None:
+            category.image_url = image_url  # Update image_url if provided
         category.save()
         
         # Log activity
@@ -2279,6 +2291,7 @@ def UpdateCategory(request):
             "category": {
                 "id": category.id,
                 "category_name": category.category_name,
+                "image_url": category.image_url,  # Include image_url in response
                 "updated_at": category.updated_at
             },
             "status": status.HTTP_200_OK
@@ -2336,6 +2349,7 @@ def AddSubcategory(request):
     
     subcategory_name = request.data.get('subcategory_name')
     category_id = request.data.get('category_id')
+    image_url = request.data.get('image_url', None)  # Optional image_url field
     metadata = request.data.get('metadata', None)  # Optional metadata field
     
     if not subcategory_name or not category_id:
@@ -2350,6 +2364,7 @@ def AddSubcategory(request):
         subcategory = SubCategory.objects.create(
             subcategory_name=subcategory_name,
             subcategory_category=category,
+            image_url=image_url if image_url is not None else None,
             metadata=metadata if metadata is not None else None
         )
         
@@ -2367,6 +2382,7 @@ def AddSubcategory(request):
                 "id": subcategory.id,
                 "subcategory_name": subcategory.subcategory_name,
                 "category_name": category.category_name,
+                "image_url": subcategory.image_url,  # Include image_url in response
                 "metadata": subcategory.metadata,
                 "created_at": subcategory.created_at
             },
@@ -2403,6 +2419,7 @@ def GetAllSubcategories(request):
                 "id": subcategory.subcategory_category.id,
                 "category_name": subcategory.subcategory_category.category_name
             },
+            "image_url": subcategory.image_url,  # Add image_url to the response
             "metadata": subcategory.metadata,  # Add metadata to the response
             "item_count": item_count,
             "created_at": subcategory.created_at,
@@ -2422,7 +2439,8 @@ def UpdateSubcategory(request):
     subcategory_name = request.data.get('subcategory_name')
     category_id = request.data.get('category_id')
     metadata = request.data.get('metadata')  # New: get metadata from request
-    
+    image_url = request.data.get('image_url')  # New: get image_url from request
+
     if not subcategory_id or not subcategory_name:
         return Response({"message": "Subcategory ID and name are required."}, status=status.HTTP_400_BAD_REQUEST)
     
@@ -2431,6 +2449,7 @@ def UpdateSubcategory(request):
         old_name = subcategory.subcategory_name
         old_category = subcategory.subcategory_category
         old_metadata = subcategory.metadata
+        old_image_url = subcategory.image_url
 
         # Check if another subcategory with the same name exists
         if SubCategory.objects.filter(subcategory_name__iexact=subcategory_name).exclude(id=subcategory_id).exists():
@@ -2450,6 +2469,10 @@ def UpdateSubcategory(request):
         if metadata is not None:
             subcategory.metadata = metadata
 
+        # Update image_url if provided
+        if image_url is not None:
+            subcategory.image_url = image_url
+
         subcategory.save()
         
         # Log activity
@@ -2462,6 +2485,9 @@ def UpdateSubcategory(request):
         
         if metadata is not None and old_metadata != metadata:
             change_log.append(f"metadata from '{old_metadata}' to '{metadata}'")
+
+        if image_url is not None and old_image_url != image_url:
+            change_log.append(f"image_url from '{old_image_url}' to '{image_url}'")
         
         changes = ", ".join(change_log) if change_log else "no changes"
         ActivityLog.objects.create(
@@ -2480,6 +2506,7 @@ def UpdateSubcategory(request):
                     "id": subcategory.subcategory_category.id,
                     "category_name": subcategory.subcategory_category.category_name
                 },
+                "image_url": subcategory.image_url,  # Include image_url in response
                 "metadata": subcategory.metadata,  # Include metadata in response
                 "updated_at": subcategory.updated_at
             },

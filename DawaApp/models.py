@@ -57,6 +57,7 @@ class UserProfile(models.Model):
 
 class Category(models.Model):
     category_name = models.CharField(max_length=50, unique=True)
+    image_url = models.URLField(max_length=500, null=True, blank=True)  # Optional field for image URL
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -66,6 +67,7 @@ class Category(models.Model):
 class SubCategory(models.Model):
     subcategory_name = models.CharField(max_length=50, unique=True)
     subcategory_category = models.ForeignKey(Category, on_delete=models.CASCADE)
+    image_url = models.URLField(max_length=500, null=True, blank=True)     
     metadata = models.JSONField(null=True, blank=True)  # Optional metadata field
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
