@@ -70,24 +70,21 @@ def Register(request):
                     return Response({
                         "message": "Email Already Registered, Please Use A Different Email",
                         "errors": {"email": ["This email is already taken."]},
-                        "status": status.HTTP_400_BAD_REQUEST
-                    })
+                    }, status=status.HTTP_400_BAD_REQUEST)
 
                 if User.objects.filter(username=username).exists():
                     logger.warning(f"Username already registered: {username}")
                     return Response({
                         "message": "Username Already Registered, Please Use A Different Username",
                         "errors": {"username": ["This username is already taken."]},
-                        "status": status.HTTP_400_BAD_REQUEST
-                    })
+                    }, status=status.HTTP_400_BAD_REQUEST)
 
                 if password != password2:
                     logger.warning("Passwords do not match.")
                     return Response({
                         "message": "Passwords Didn't Match",
                         "errors": {"password": ["Passwords do not match."]},
-                        "status": status.HTTP_400_BAD_REQUEST
-                    })
+                    }, status=status.HTTP_400_BAD_REQUEST)
 
                 otp_code = ''.join(random.choices('0123456789', k=6))
                 logger.info(f"Generated OTP code: {otp_code}")
@@ -119,8 +116,7 @@ def Register(request):
                         return Response({
                             "message": "Contact/Telephone Number Already Registered, Please Use A Different Contact/Telephone Number",
                             "errors": {"contact": ["This contact is already registered."]},
-                            "status": status.HTTP_400_BAD_REQUEST
-                        })
+                        }, status=status.HTTP_400_BAD_REQUEST)
 
                     user_profile_serializer.save()
                     logger.info(f"UserProfile created for user: {username}")
@@ -130,8 +126,7 @@ def Register(request):
                     return Response({
                         "message": "Failed to create profile.",
                         "errors": user_profile_serializer.errors,
-                        "status": status.HTTP_400_BAD_REQUEST
-                    })
+                    }, status=status.HTTP_400_BAD_REQUEST)
 
                 welcome_email = EmailMessage(
                     subject="Activate Your Dawa User Account Now",
@@ -160,28 +155,24 @@ def Register(request):
 
                 return Response({
                     "message": f"User Account Created. OTP code sent to {email}.",
-                    "status": status.HTTP_201_CREATED
-                })
+                }, status=status.HTTP_201_CREATED)
             except Exception as e:
                 logger.exception("An unexpected error occurred during registration.")
                 return Response({
                     "message": "Failed To Create User Account.",
                     "errors": {"exception": [str(e)]},
-                    "status": status.HTTP_500_INTERNAL_SERVER_ERROR
-                })
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         logger.error(f"User serializer invalid: {user_serializer.errors}")
         return Response({
             "message": "Invalid data provided.",
             "errors": user_serializer.errors,
-            "status": status.HTTP_400_BAD_REQUEST
-        })
+        }, status=status.HTTP_400_BAD_REQUEST)
 
     logger.warning("Register endpoint hit with non-POST method.")
     return Response({
         "message": "Method not allowed",
-        "status": status.HTTP_405_METHOD_NOT_ALLOWED
-    })
+    }, status=status.HTTP_405_METHOD_NOT_ALLOWED)
 
 
 @api_view(['POST'])
@@ -191,23 +182,23 @@ def GoogleLogin(request):
         role = request.data.get('role', 'Client')
 
         if not google_token:
-            return Response({"message": "Google token is required.", "status": status.HTTP_400_BAD_REQUEST})
+            return Response({"message": "Google token is required."}, status=status.HTTP_400_BAD_REQUEST)
 
         # Verify Google token
         try:
             id_info = verify_oauth2_token(google_token, Request())
         except ValueError as e:
-            return Response({"message": f"Invalid Google token: {str(e)}", "status": status.HTTP_400_BAD_REQUEST})
+            return Response({"message": f"Invalid Google token: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
 
         if id_info['iss'] not in ['accounts.google.com', 'https://accounts.google.com']:
-            return Response({"message": "Invalid Google token issuer.", "status": status.HTTP_400_BAD_REQUEST})
+            return Response({"message": "Invalid Google token issuer."}, status=status.HTTP_400_BAD_REQUEST)
 
         if id_info['aud'] != settings.GOOGLE_CLIENT_ID:
-            return Response({"message": "Invalid audience.", "status": status.HTTP_403_FORBIDDEN})
+            return Response({"message": "Invalid audience."}, status=status.HTTP_403_FORBIDDEN)
 
         # Check token expiration using timezone-aware UTC time
         if id_info['exp'] < timezone.now().timestamp():
-            return Response({"message": "Token has expired.", "status": status.HTTP_403_FORBIDDEN})
+            return Response({"message": "Token has expired."}, status=status.HTTP_403_FORBIDDEN)
 
         # Extract data from Google token
         email = id_info.get('email')
@@ -217,7 +208,7 @@ def GoogleLogin(request):
 
         # Validate user role
         if role not in ['Client', 'Vendor']:
-            return Response({"message": "Invalid user role. Must be 'Client' or 'Vendor'.", "status": status.HTTP_400_BAD_REQUEST})
+            return Response({"message": "Invalid user role. Must be 'Client' or 'Vendor'."}, status=status.HTTP_400_BAD_REQUEST)
 
         # Check if user exists or create new user
         user, created = User.objects.get_or_create(email=email, defaults={
@@ -296,10 +287,10 @@ def GoogleLogin(request):
 
         # Return appropriate status code
         status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
-        return Response({"message": "Google Login Successful", "user_data": combined_data, "status": status_code})
+        return Response({"message": "Google Login Successful", "user_data": combined_data}, status=status_code)
 
     except Exception as e:
-        return Response({"message": f"Google Login Failed: {str(e)}", "status": status.HTTP_400_BAD_REQUEST})
+        return Response({"message": f"Google Login Failed: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
 
 @api_view(['POST'])
 def ActivateAccount(request):
@@ -308,12 +299,12 @@ def ActivateAccount(request):
         otp_code = request.data.get("otp_code")
 
         if not email or not otp_code:
-            return Response({"message": "Email and otp_code are required.", "status": status.HTTP_400_BAD_REQUEST})
+            return Response({"message": "Email and otp_code are required."}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             user = User.objects.get(email=email)
         except User.DoesNotExist:
-            return Response({"message": "User does not exist.", "status": status.HTTP_404_NOT_FOUND})
+            return Response({"message": "User does not exist."}, status=status.HTTP_404_NOT_FOUND)
 
         try:
             profile = UserProfile.objects.get(user=user, otp_code=otp_code)
@@ -334,12 +325,12 @@ def ActivateAccount(request):
                 user_agent=request.META.get('HTTP_USER_AGENT')
             )
 
-            return Response({"message": "Account activated successfully. Proceed to login.", "status": status.HTTP_200_OK})
+            return Response({"message": "Account activated successfully. Proceed to login."}, status=status.HTTP_200_OK)
 
         except UserProfile.DoesNotExist:
-            return Response({"message": "Invalid otp_code.", "status": status.HTTP_400_BAD_REQUEST})
+            return Response({"message": "Invalid otp_code."}, status=status.HTTP_400_BAD_REQUEST)
 
-    return Response({"message": "Method not allowed", "status": status.HTTP_405_METHOD_NOT_ALLOWED})
+    return Response({"message": "Method not allowed"}, status=status.HTTP_405_METHOD_NOT_ALLOWED)
 
 @api_view(['POST'])
 def Login(request):
@@ -353,15 +344,15 @@ def Login(request):
             try:
                 user = User.objects.get(email=email)
             except User.DoesNotExist:
-                return Response({"message": "Login failed. User does not exist.", "status": status.HTTP_404_NOT_FOUND})
+                return Response({"message": "Login failed. User does not exist."}, status=status.HTTP_404_NOT_FOUND)
 
             # Check if password is correct
             if not user.check_password(password):
-                return Response({"message": "Invalid password.", "status": status.HTTP_401_UNAUTHORIZED})
-            
+                return Response({"message": "Invalid password."}, status=status.HTTP_401_UNAUTHORIZED)
+
             # Check if user is active
             if not user.is_active:
-                return Response({"message": "Account is not activated. Please check your email or contact support for assistance.", "status": status.HTTP_403_FORBIDDEN})
+                return Response({"message": "Account is not activated. Please check your email or contact support for assistance."}, status=status.HTTP_403_FORBIDDEN)
 
             # Proceed with authentication
             serializer = AuthTokenSerializer(data=request.data)
@@ -399,12 +390,12 @@ def Login(request):
                 user_agent=request.META.get('HTTP_USER_AGENT')
             )
 
-            return Response({"message": "Logged In Successfully", "user_data": combined_data, "status": status.HTTP_202_ACCEPTED})
-        
-        except Exception as e:
-            return Response({"message": f"Login failed: {str(e)}", "status": status.HTTP_400_BAD_REQUEST})
+            return Response({"message": "Logged In Successfully", "user_data": combined_data}, status=status.HTTP_200_OK)
 
-    return Response({"message": "Method not allowed", "status": status.HTTP_405_METHOD_NOT_ALLOWED})
+        except Exception as e:
+            return Response({"message": f"Login failed: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+
+    return Response({"message": "Method not allowed"}, status=status.HTTP_405_METHOD_NOT_ALLOWED)
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
@@ -464,11 +455,10 @@ def GetUserProfile(request):
                 "sold_items": sold_items,
                 "item_details": item_data_list,
             },
-            "status": status.HTTP_200_OK,
-        }
-        return Response({'data': response_data, 'status': status.HTTP_200_OK})
+            }
+        return Response({'data': response_data}, status=status.HTTP_200_OK)
     except Exception as e:
-        return Response({"message": "An error occurred", "details": str(e), "status": status.HTTP_500_INTERNAL_SERVER_ERROR})
+        return Response({"message": "An error occurred", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 @api_view(['POST'])
 def GetMyShopProfile(request):
@@ -483,14 +473,14 @@ def GetMyShopProfile(request):
         seller_id = request.data.get('user_id')
         if not seller_id:
             return Response(
-                {"message": "user_id is required", "status": status.HTTP_400_BAD_REQUEST},
+                {"message": "user_id is required"},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
         # Check if the requesting user is the shop owner
         if not request.user.is_authenticated or int(seller_id) != request.user.id:
             return Response(
-                {"message": "You are not authorized to access this shop profile.", "status": status.HTTP_403_FORBIDDEN},
+                {"message": "You are not authorized to access this shop profile."},
                 status=status.HTTP_403_FORBIDDEN
             )
 
@@ -547,14 +537,13 @@ def GetMyShopProfile(request):
                 "sold_items": sold_items,
                 "item_details": item_data_list,
             },
-            "status": status.HTTP_200_OK,
         }
-        return Response({'data': response_data, 'status': status.HTTP_200_OK}, status=status.HTTP_200_OK)
+        return Response({'data': response_data}, status=status.HTTP_200_OK)
     except Exception as e:
         # If the user is not authenticated, DRF will return 401 automatically.
         # For other errors, return 500.
         return Response(
-            {"message": "An error occurred", "details": str(e), "status": status.HTTP_500_INTERNAL_SERVER_ERROR},
+            {"message": "An error occurred", "details": str(e)},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
@@ -613,11 +602,10 @@ def GetShopProfile(request):
                 "sold_items": sold_items,
                 "item_details": item_data_list,
             },
-            "status": status.HTTP_200_OK,
         }
-        return Response({'data': response_data, 'status': status.HTTP_200_OK})
+        return Response({'data': response_data}, status=status.HTTP_200_OK)
     except Exception as e:
-        return Response({"message": "An error occurred", "details": str(e), "status": status.HTTP_500_INTERNAL_SERVER_ERROR})
+        return Response({"message": "An error occurred", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 @api_view(['PATCH'])
 @permission_classes([IsAuthenticated])
@@ -626,7 +614,7 @@ def UpdateUserProfile(request):
     try:
         profile = UserProfile.objects.get(user=user)
     except UserProfile.DoesNotExist:
-        return Response({"message": "User profile does not exist.", "status": status.HTTP_404_NOT_FOUND})
+        return Response({"message": "User profile does not exist."}, status=status.HTTP_404_NOT_FOUND)
     
     change_log = []  # Store changes for logging
 
@@ -706,7 +694,7 @@ def UpdateUserProfile(request):
             user_agent=request.META.get('HTTP_USER_AGENT')
         )
 
-    return Response({"message": "User profile updated successfully.", "status": status.HTTP_200_OK})
+    return Response({"message": "User profile updated successfully."}, status=status.HTTP_200_OK)
 
 @api_view(['POST'])
 def ReActivateAccount(request):
@@ -715,12 +703,12 @@ def ReActivateAccount(request):
         otp_code = request.data.get("otp_code")
 
         if not email or not otp_code:
-            return Response({"message": "Email and otp code are required.", "status":status.HTTP_400_BAD_REQUEST})
+            return Response({"message": "Email and otp code are required."}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             user = User.objects.get(email=email)
         except User.DoesNotExist:
-            return Response({"message": "User does not exist.", "status":status.HTTP_404_NOT_FOUND})
+            return Response({"message": "User does not exist."}, status=status.HTTP_404_NOT_FOUND)
 
         try:
             profile = UserProfile.objects.get(user=user, otp_code=otp_code)
@@ -741,12 +729,12 @@ def ReActivateAccount(request):
                     user_agent=request.META.get('HTTP_USER_AGENT')
                 )
 
-                return Response({"message": "Account reactivated successfully. Proceed To Login", "status":status.HTTP_200_OK})
+                return Response({"message": "Account reactivated successfully. Proceed To Login"}, status=status.HTTP_200_OK)
             else:
-                return Response({"message": "Failed to reactivate the user account.", "status":status.HTTP_500_INTERNAL_SERVER_ERROR})
+                return Response({"message": "Failed to reactivate the user account."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         except UserProfile.DoesNotExist:
-            return Response({"message": "Invalid otp code.", "status":status.HTTP_400_BAD_REQUEST})
-    return Response({"message": "Method not allowed", "status":status.HTTP_405_METHOD_NOT_ALLOWED})
+            return Response({"message": "Invalid otp code."}, status=status.HTTP_400_BAD_REQUEST)
+    return Response({"message": "Method not allowed"}, status=status.HTTP_405_METHOD_NOT_ALLOWED)
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
@@ -758,19 +746,19 @@ def ChangePassword(request):
 
     # Validate required fields
     if not all([old_password, new_password, confirm_password]):
-        return Response({"message": "All fields are required.", "status": status.HTTP_400_BAD_REQUEST})
+        return Response({"message": "All fields are required."}, status=status.HTTP_400_BAD_REQUEST)
 
     # Check if old password is correct
     if not check_password(old_password, user.password):
-        return Response({"message": "Old password is incorrect.", "status": status.HTTP_400_BAD_REQUEST})
+        return Response({"message": "Old password is incorrect."}, status=status.HTTP_400_BAD_REQUEST)
 
     # Ensure new password matches confirmation
     if new_password != confirm_password:
-        return Response({"message": "New password and confirm password do not match.", "status": status.HTTP_400_BAD_REQUEST})
+        return Response({"message": "New password and confirm password do not match."}, status=status.HTTP_400_BAD_REQUEST)
 
     # Enforce password length policy
     if len(new_password) < 8:
-        return Response({"message": "Password must be at least 8 characters long.", "status": status.HTTP_400_BAD_REQUEST})
+        return Response({"message": "Password must be at least 8 characters long."}, status=status.HTTP_400_BAD_REQUEST)
 
     # Update the user's password
     user.set_password(new_password)
@@ -784,14 +772,14 @@ def ChangePassword(request):
         user_agent=request.META.get('HTTP_USER_AGENT')
     )
 
-    return Response({"message": "Password changed successfully. Please log in again.", "status": status.HTTP_200_OK})
+    return Response({"message": "Password changed successfully. Please log in again."}, status=status.HTTP_200_OK)
 
 @api_view(['POST'])
 def ForgotPassword(request):
     email = request.data.get('email')
 
     if not email:
-        return Response({"message": "Email is required.", "status": status.HTTP_400_BAD_REQUEST})
+        return Response({"message": "Email is required."}, status=status.HTTP_400_BAD_REQUEST)
 
     # Check if user exists
     user = get_object_or_404(User, email=email)
@@ -836,7 +824,7 @@ def ForgotPassword(request):
     )
 
     # Generic response to avoid exposing whether an email exists
-    return Response({"message": "If the email is associated with an account, a password reset OTP has been sent.", "status": status.HTTP_200_OK})
+    return Response({"message": "If the email is associated with an account, a password reset OTP has been sent."}, status=status.HTTP_200_OK)
 
 @api_view(['POST'])
 def ResetPassword(request):
@@ -846,10 +834,10 @@ def ResetPassword(request):
     confirm_password = request.data.get('confirm_password')
 
     if not all([email, otp, new_password, confirm_password]):
-        return Response({"message": "All fields are required.", "status": status.HTTP_400_BAD_REQUEST})
+        return Response({"message": "All fields are required."}, status=status.HTTP_400_BAD_REQUEST)
 
     if new_password != confirm_password:
-        return Response({"message": "Passwords do not match.", "status": status.HTTP_400_BAD_REQUEST})
+        return Response({"message": "Passwords do not match."}, status=status.HTTP_400_BAD_REQUEST)
 
     # Check if user exists
     user = get_object_or_404(User, email=email)
@@ -858,18 +846,18 @@ def ResetPassword(request):
     try:
         user_profile = UserProfile.objects.get(user=user)
     except UserProfile.DoesNotExist:
-        return Response({"message": "User profile not found.", "status": status.HTTP_400_BAD_REQUEST})
+        return Response({"message": "User profile not found."}, status=status.HTTP_400_BAD_REQUEST)
 
     if not user_profile.otp_code or not user_profile.otp_created_at:
-        return Response({"message": "No OTP found for this user.", "status": status.HTTP_400_BAD_REQUEST})
+        return Response({"message": "No OTP found for this user."}, status=status.HTTP_400_BAD_REQUEST)
 
     otp_age = (timezone.now() - user_profile.otp_created_at).total_seconds()
 
     if otp != user_profile.otp_code:
-        return Response({"message": "Invalid One-Time PIN.", "status": status.HTTP_403_FORBIDDEN})
+        return Response({"message": "Invalid One-Time PIN."}, status=status.HTTP_403_FORBIDDEN)
 
     if otp_age > 600:  # OTP expires after 10 minutes
-        return Response({"message": "One-Time PIN has expired.", "status": status.HTTP_403_FORBIDDEN})
+        return Response({"message": "One-Time PIN has expired."}, status=status.HTTP_403_FORBIDDEN)
 
     # Update password
     user.set_password(new_password)
@@ -888,7 +876,7 @@ def ResetPassword(request):
         user_agent=request.META.get('HTTP_USER_AGENT')
     )
 
-    return Response({"message": "Password reset successfully. Please log in with your new password.", "status": status.HTTP_200_OK})
+    return Response({"message": "Password reset successfully. Please log in with your new password."}, status=status.HTTP_200_OK)
 
 @api_view(['POST'])
 def ResendOTP(request):
@@ -897,10 +885,10 @@ def ResendOTP(request):
         purpose = request.data.get('purpose')  # 'forgot_password', 'activate', or 'reactivate'
 
         if not email or not purpose:
-            return Response({"message": "Email and purpose are required.", "status": status.HTTP_400_BAD_REQUEST})
+            return Response({"message": "Email and purpose are required."}, status=status.HTTP_400_BAD_REQUEST)
 
         if purpose not in ['forgot_password', 'activate', 'reactivate']:
-            return Response({"message": "Invalid purpose. Use 'forgot_password', 'activate', or 'reactivate'.", "status": status.HTTP_400_BAD_REQUEST})
+            return Response({"message": "Invalid purpose. Use 'forgot_password', 'activate', or 'reactivate'."}, status=status.HTTP_400_BAD_REQUEST)
 
         # Fetch the user and user profile
         user = get_object_or_404(User, email=email)
@@ -949,10 +937,10 @@ def ResendOTP(request):
             user_agent=request.META.get('HTTP_USER_AGENT')
         )
 
-        return Response({"message": f"OTP for {purpose} resent successfully.", "status": status.HTTP_200_OK})
+        return Response({"message": f"OTP for {purpose} resent successfully."}, status=status.HTTP_200_OK)
 
     except Exception as e:
-        return Response({"message": f"Error processing request: {str(e)}", "status": status.HTTP_400_BAD_REQUEST})
+        return Response({"message": f"Error processing request: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
 
 #STOPPED HERE FOR ACTIVITY LOGS
 
@@ -1672,21 +1660,21 @@ def MarkChatRead(request):
     try:
         chat_id = request.data.get('chat_id')
         if chat_id is None:
-            return Response({"error": "chat_id is required.", "status": status.HTTP_400_BAD_REQUEST})
+            return Response({"error": "chat_id is required."}, status=status.HTTP_400_BAD_REQUEST)
         try:
             chat_id = int(chat_id)
         except (TypeError, ValueError):
-            return Response({"error": "chat_id must be a number.", "status": status.HTTP_400_BAD_REQUEST})
+            return Response({"error": "chat_id must be a number."}, status=status.HTTP_400_BAD_REQUEST)
 
         chat = get_object_or_404(Chat, id=chat_id)
         if request.user not in chat.participants.all():
-            return Response({"error": "You are not a participant in this chat.", "status": status.HTTP_403_FORBIDDEN})
+            return Response({"error": "You are not a participant in this chat."}, status=status.HTTP_403_FORBIDDEN)
 
         # Mark all messages where current user is the receiver as read
         updated = Message.objects.filter(chat=chat, receiver=request.user).update(message_read=True)
-        return Response({"message": "Chat marked as read.", "updated_count": updated, "status": status.HTTP_200_OK})
+        return Response({"message": "Chat marked as read.", "updated_count": updated}, status=status.HTTP_200_OK)
     except Exception as e:
-        return Response({"error": str(e), "status": status.HTTP_400_BAD_REQUEST})
+        return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
 @api_view(['POST'])
@@ -1698,9 +1686,9 @@ def DeleteAccount(request):
         # Invalidate all Knox tokens for this user so the client is logged out
         AuthToken.objects.filter(user=user).delete()
         user.delete()  # CASCADE will remove UserProfile and other related data
-        return Response({"message": "Account deleted successfully.", "status": status.HTTP_200_OK})
+        return Response({"message": "Account deleted successfully."}, status=status.HTTP_200_OK)
     except Exception as e:
-        return Response({"error": str(e), "status": status.HTTP_500_INTERNAL_SERVER_ERROR})
+        return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @api_view(['POST'])
@@ -1730,9 +1718,9 @@ def DeleteMyData(request):
         # Invalidate all tokens (logout)
         AuthToken.objects.filter(user=user).delete()
 
-        return Response({"message": "Your data has been deleted successfully.", "status": status.HTTP_200_OK})
+        return Response({"message": "Your data has been deleted successfully."}, status=status.HTTP_200_OK)
     except Exception as e:
-        return Response({"error": str(e), "status": status.HTTP_500_INTERNAL_SERVER_ERROR})
+        return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @api_view(['DELETE'])
@@ -1742,23 +1730,23 @@ def DeleteItem(request):
     try:
         item_id = request.data.get('item_id')
         if item_id is None:
-            return Response({"error": "item_id is required.", "status": status.HTTP_400_BAD_REQUEST})
+            return Response({"error": "item_id is required."}, status=status.HTTP_400_BAD_REQUEST)
         try:
             item_id = int(item_id)
         except (TypeError, ValueError):
-            return Response({"error": "item_id must be a number.", "status": status.HTTP_400_BAD_REQUEST})
+            return Response({"error": "item_id must be a number."}, status=status.HTTP_400_BAD_REQUEST)
 
         item = get_object_or_404(Item, id=item_id)
         if item.seller != request.user:
-            return Response({"error": "You are not the owner of this listing.", "status": status.HTTP_403_FORBIDDEN})
+            return Response({"error": "You are not the owner of this listing."}, status=status.HTTP_403_FORBIDDEN)
 
         item_name = item.item_name
         item.delete()
-        return Response({"message": f"Item '{item_name}' deleted successfully.", "status": status.HTTP_200_OK})
+        return Response({"message": f"Item '{item_name}' deleted successfully."}, status=status.HTTP_200_OK)
     except Exception as e:
         if hasattr(e, 'status_code'):
             raise
-        return Response({"error": str(e), "status": status.HTTP_400_BAD_REQUEST})
+        return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
 @api_view(['POST'])
