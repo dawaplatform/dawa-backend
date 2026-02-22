@@ -1664,6 +1664,103 @@ def GetChatsWithMessages(request):
     except Exception as e:
         return Response({"message": "An error occurred", "details": str(e), "status": status.HTTP_500_INTERNAL_SERVER_ERROR})
 
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def MarkChatRead(request):
+    """Mark all messages in the chat as read for the current user (receiver)."""
+    try:
+        chat_id = request.data.get('chat_id')
+        if chat_id is None:
+            return Response({"error": "chat_id is required.", "status": status.HTTP_400_BAD_REQUEST})
+        try:
+            chat_id = int(chat_id)
+        except (TypeError, ValueError):
+            return Response({"error": "chat_id must be a number.", "status": status.HTTP_400_BAD_REQUEST})
+
+        chat = get_object_or_404(Chat, id=chat_id)
+        if request.user not in chat.participants.all():
+            return Response({"error": "You are not a participant in this chat.", "status": status.HTTP_403_FORBIDDEN})
+
+        # Mark all messages where current user is the receiver as read
+        updated = Message.objects.filter(chat=chat, receiver=request.user).update(message_read=True)
+        return Response({"message": "Chat marked as read.", "updated_count": updated, "status": status.HTTP_200_OK})
+    except Exception as e:
+        return Response({"error": str(e), "status": status.HTTP_400_BAD_REQUEST})
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def DeleteAccount(request):
+    """Permanently delete the current user's account and all associated data; invalidate auth token."""
+    try:
+        user = request.user
+        # Invalidate all Knox tokens for this user so the client is logged out
+        AuthToken.objects.filter(user=user).delete()
+        user.delete()  # CASCADE will remove UserProfile and other related data
+        return Response({"message": "Account deleted successfully.", "status": status.HTTP_200_OK})
+    except Exception as e:
+        return Response({"error": str(e), "status": status.HTTP_500_INTERNAL_SERVER_ERROR})
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def DeleteMyData(request):
+    """GDPR-style: delete or anonymize the current user's personal data and invalidate session (logout)."""
+    try:
+        user = request.user
+        # Anonymize User
+        user.email = f"deleted_{user.id}@deleted.local"
+        user.username = f"deleted_{user.id}"
+        user.first_name = ""
+        user.last_name = ""
+        user.set_unusable_password()
+        user.save()
+
+        # Anonymize UserProfile if exists
+        if hasattr(user, 'userprofile'):
+            profile = user.userprofile
+            profile.contact = ""
+            profile.address = ""
+            profile.profile_picture = ""
+            profile.national_id_or_passport_number = ""
+            profile.national_id_or_passport_document = ""
+            profile.save()
+
+        # Invalidate all tokens (logout)
+        AuthToken.objects.filter(user=user).delete()
+
+        return Response({"message": "Your data has been deleted successfully.", "status": status.HTTP_200_OK})
+    except Exception as e:
+        return Response({"error": str(e), "status": status.HTTP_500_INTERNAL_SERVER_ERROR})
+
+
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def DeleteItem(request):
+    """Permanently delete the listing with the given item_id if it belongs to the current user."""
+    try:
+        item_id = request.data.get('item_id')
+        if item_id is None:
+            return Response({"error": "item_id is required.", "status": status.HTTP_400_BAD_REQUEST})
+        try:
+            item_id = int(item_id)
+        except (TypeError, ValueError):
+            return Response({"error": "item_id must be a number.", "status": status.HTTP_400_BAD_REQUEST})
+
+        item = get_object_or_404(Item, id=item_id)
+        if item.seller != request.user:
+            return Response({"error": "You are not the owner of this listing.", "status": status.HTTP_403_FORBIDDEN})
+
+        item_name = item.item_name
+        item.delete()
+        return Response({"message": f"Item '{item_name}' deleted successfully.", "status": status.HTTP_200_OK})
+    except Exception as e:
+        if hasattr(e, 'status_code'):
+            raise
+        return Response({"error": str(e), "status": status.HTTP_400_BAD_REQUEST})
+
+
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def SubmitReview(request):

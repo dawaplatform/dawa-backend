@@ -20,6 +20,11 @@ urlpatterns = [
     path('getuserwishlist/', views.GetUserWishlist),
     path('sendmessage/', views.SendMessage),
     path('getchatswithmessages/', views.GetChatsWithMessages),
+    path('markchatread/', views.MarkChatRead),
+
+    path('deleteaccount/', views.DeleteAccount),
+    path('deletemydata/', views.DeleteMyData),
+    path('deleteitem/', views.DeleteItem),
 
     path('changepassword/', views.ChangePassword),
     path('forgotpassword/', views.ForgotPassword),
