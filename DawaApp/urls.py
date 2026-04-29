@@ -53,6 +53,7 @@ urlpatterns = [
     path('deleteuseradmin/', views.DeleteUserAdmin),
     path('updateuseradmin/', views.UpdateUserAdmin),
     path('admindashboardstats/', views.AdminDashboardStats),
+    path('adminanalytics/', views.AdminAnalytics),
     
     # Category and Subcategory Admin URLs
     path('categoryAdminAdd/', views.AddCategory),

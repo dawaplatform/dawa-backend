@@ -1,4 +1,5 @@
 from django.utils import timezone
+from datetime import timedelta
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.decorators import api_view, permission_classes, parser_classes
@@ -28,7 +29,8 @@ from django.contrib.auth.hashers import check_password
 from rest_framework.pagination import LimitOffsetPagination
 from django.contrib.postgres.search import TrigramSimilarity
 import secrets
-from django.db.models import Count, Sum
+from django.db.models import Count, Prefetch, Sum
+from django.db.models.functions import TruncDate
 import logging
 
 # Get the logger
@@ -947,35 +949,46 @@ def ResendOTP(request):
 @api_view(['GET'])
 def GetCategoriesWithSubcategories(request):
     try:
-        categories = Category.objects.all()
-        result = []
+        approved_item_filter = Q(item__approval_status='Approved')
+        subcategories = (
+            SubCategory.objects
+            .annotate(subcategory_item_count=Count('item', filter=approved_item_filter, distinct=True))
+            .order_by('subcategory_name')
+        )
+        categories = (
+            Category.objects
+            .annotate(
+                category_item_count=Count(
+                    'subcategory__item',
+                    filter=Q(subcategory__item__approval_status='Approved'),
+                    distinct=True,
+                )
+            )
+            .prefetch_related(
+                Prefetch('subcategory_set', queryset=subcategories, to_attr='prefetched_subcategories')
+            )
+            .order_by('category_name')
+        )
 
-        for category in categories:
-            # Get the count of items in the category
-            category_item_count = Item.objects.filter(item_subcategory__subcategory_category=category, approval_status='Approved').count()
-
-            subcategories = SubCategory.objects.filter(subcategory_category=category)
-            subcategory_data = []
-
-            for subcategory in subcategories:
-                # Get the count of items in the subcategory
-                subcategory_item_count = Item.objects.filter(item_subcategory=subcategory, approval_status='Approved').count()
-
-                subcategory_data.append({
-                    'id': subcategory.id,
-                    'subcategory_name': subcategory.subcategory_name,
-                    'subcategory_item_count': subcategory_item_count,
-                    'metadata': subcategory.metadata,
-                    'image_url': subcategory.image_url,  # Add image_url for subcategory
-                })
-
-            result.append({
+        result = [
+            {
                 'id': category.id,
                 'category_name': category.category_name,
-                'category_item_count': category_item_count,
-                'image_url': category.image_url,  # Add image_url for category
-                'subcategories': subcategory_data
-            })
+                'category_item_count': category.category_item_count,
+                'image_url': category.image_url,
+                'subcategories': [
+                    {
+                        'id': subcategory.id,
+                        'subcategory_name': subcategory.subcategory_name,
+                        'subcategory_item_count': subcategory.subcategory_item_count,
+                        'metadata': subcategory.metadata,
+                        'image_url': subcategory.image_url,
+                    }
+                    for subcategory in category.prefetched_subcategories
+                ],
+            }
+            for category in categories
+        ]
 
         return Response({"data": result, "status": status.HTTP_200_OK})
 
@@ -1205,6 +1218,13 @@ def UpdateItem(request):
             updated_fields.append("negotiable status")
 
         if 'item_status' in data and data.get('item_status') != item.item_status:
+            allowed_statuses = {choice[0] for choice in Item.STATUS_CHOICES}
+            if data.get('item_status') not in allowed_statuses:
+                return Response({
+                    "error": "Invalid item_status.",
+                    "allowed_statuses": sorted(allowed_statuses),
+                    "status": status.HTTP_400_BAD_REQUEST,
+                }, status=status.HTTP_400_BAD_REQUEST)
             item.item_status = data.get('item_status')
             updated_fields.append("status")
 
@@ -2264,6 +2284,127 @@ def AdminDashboardStats(request):
         "total_subscribers": total_subscribers,
         "status": 200
     })
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def AdminAnalytics(request):
+    user = request.user
+    if not hasattr(user, 'userprofile') or user.userprofile.role != 'Admin':
+        return Response({"message": "You do not have permission to perform this action."}, status=403)
+
+    try:
+        days = int(request.query_params.get('days', 30))
+    except (TypeError, ValueError):
+        days = 30
+    days = min(max(days, 7), 90)
+    start_date = timezone.now().date() - timedelta(days=days - 1)
+
+    def daily_counts(model, date_field, queryset=None):
+        qs = queryset if queryset is not None else model.objects.all()
+        qs = qs.filter(**{f"{date_field}__date__gte": start_date})
+        rows = (
+            qs.annotate(day=TruncDate(date_field))
+            .values('day')
+            .annotate(count=Count('id'))
+            .order_by('day')
+        )
+        counts = {row['day']: row['count'] for row in rows}
+        return [
+            {
+                "date": (start_date + timedelta(days=offset)).isoformat(),
+                "count": counts.get(start_date + timedelta(days=offset), 0),
+            }
+            for offset in range(days)
+        ]
+
+    user_registrations = daily_counts(User, 'date_joined')
+    product_posts = daily_counts(Item, 'created_at')
+    chats_created = daily_counts(Chat, 'created_at')
+    messages_sent = daily_counts(Message, 'created_at')
+
+    approval_distribution = list(
+        Item.objects.values('approval_status')
+        .annotate(count=Count('id'))
+        .order_by('approval_status')
+    )
+    status_distribution = list(
+        Item.objects.values('item_status')
+        .annotate(count=Count('id'))
+        .order_by('item_status')
+    )
+
+    category_performance = list(
+        Category.objects.annotate(
+            total_items=Count('subcategory__item', distinct=True),
+            approved_items=Count(
+                'subcategory__item',
+                filter=Q(subcategory__item__approval_status='Approved'),
+                distinct=True,
+            ),
+            sold_items=Count(
+                'subcategory__item',
+                filter=Q(subcategory__item__item_status='Sold'),
+                distinct=True,
+            ),
+            out_of_stock_items=Count(
+                'subcategory__item',
+                filter=Q(subcategory__item__item_status='Out of Stock'),
+                distinct=True,
+            ),
+            cancelled_items=Count(
+                'subcategory__item',
+                filter=Q(subcategory__item__item_status='Cancelled'),
+                distinct=True,
+            ),
+        )
+        .values(
+            'id',
+            'category_name',
+            'total_items',
+            'approved_items',
+            'sold_items',
+            'out_of_stock_items',
+            'cancelled_items',
+        )
+        .order_by('-total_items')[:10]
+    )
+
+    top_chatted_products = list(
+        Item.objects.annotate(
+            chat_count=Count('chat', distinct=True),
+            message_count=Count('chat__messages', distinct=True),
+        )
+        .filter(chat_count__gt=0)
+        .values('id', 'item_name', 'chat_count', 'message_count')
+        .order_by('-message_count', '-chat_count')[:10]
+    )
+
+    pending_items = Item.objects.filter(approval_status='Pending').count()
+    reports_pending = ReportAbuse.objects.filter(status__in=['Pending', 'In Review']).count()
+    unread_messages = Message.objects.filter(message_read=False).count()
+
+    return Response({
+        "summary": {
+            "total_chats": Chat.objects.count(),
+            "total_messages": Message.objects.count(),
+            "unread_messages": unread_messages,
+            "pending_items": pending_items,
+            "reports_pending": reports_pending,
+        },
+        "trends": {
+            "user_registrations": user_registrations,
+            "product_posts": product_posts,
+            "chats_created": chats_created,
+            "messages_sent": messages_sent,
+        },
+        "distributions": {
+            "approval_status": approval_distribution,
+            "item_status": status_distribution,
+        },
+        "category_performance": category_performance,
+        "top_chatted_products": top_chatted_products,
+        "status": 200,
+    }, status=status.HTTP_200_OK)
 
 # Category and Subcategory Admin Views
 @api_view(['POST'])

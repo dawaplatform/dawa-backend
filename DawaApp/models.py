@@ -79,6 +79,8 @@ class Item(models.Model):
     STATUS_CHOICES = [
         ('Available', 'Available'),
         ('Sold', 'Sold'),
+        ('Out of Stock', 'Out of Stock'),
+        ('Cancelled', 'Cancelled'),
     ]
 
     APPROVAL_CHOICES = [
