@@ -143,7 +143,10 @@ REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'knox.auth.TokenAuthentication',
     ],
-    # ... other settings
+    'DEFAULT_THROTTLE_RATES': {
+        # Per-IP limit for DawaApp.throttles.AuthEndpointThrottle (login, register, OTP, etc.)
+        'auth': '60/minute',
+    },
 }
 
 SITE_ID = 9  # Required by allauth

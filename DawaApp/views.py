@@ -2,7 +2,7 @@ from django.utils import timezone
 from datetime import timedelta
 from rest_framework import status
 from rest_framework.response import Response
-from rest_framework.decorators import api_view, permission_classes, parser_classes
+from rest_framework.decorators import api_view, permission_classes, parser_classes, throttle_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.authtoken.serializers import AuthTokenSerializer
 from django.contrib.auth.models import User
@@ -33,11 +33,17 @@ from django.db.models import Count, Prefetch, Sum
 from django.db.models.functions import TruncDate
 import logging
 
+from .throttles import AuthEndpointThrottle
+
 # Get the logger
 logger = logging.getLogger(__name__)
 
+# Allowed self-service registration roles (never allow Admin via public register)
+ALLOWED_REGISTRATION_ROLES = ('Client', 'Vendor')
+
 # Create your views here.
 @api_view(['POST'])
+@throttle_classes([AuthEndpointThrottle])
 def Register(request):
     if request.method == 'POST':
         logger.info("Register endpoint hit with POST method.")
@@ -98,10 +104,14 @@ def Register(request):
                 user.save()
                 logger.info(f"User created: {username}")
 
+                req_role = request.data.get("role") or "Client"
+                if req_role not in ALLOWED_REGISTRATION_ROLES:
+                    req_role = "Client"
+
                 user_profile_data = {
                     "user": user.id,
                     "contact": request.data.get("contact"),
-                    "role": request.data.get("role"),
+                    "role": req_role,
                     "otp_code": otp_code,
                     "otp_created_at": timezone.now(),
                 }
@@ -178,10 +188,13 @@ def Register(request):
 
 
 @api_view(['POST'])
+@throttle_classes([AuthEndpointThrottle])
 def GoogleLogin(request):
     try:
         google_token = request.data.get('google_token')
         role = request.data.get('role') or request.data.get('user_role') or 'Client'
+        if role not in ALLOWED_REGISTRATION_ROLES:
+            role = 'Client'
 
         if not google_token:
             return Response({"message": "Google token is required."}, status=status.HTTP_400_BAD_REQUEST)
@@ -213,10 +226,6 @@ def GoogleLogin(request):
             return Response({"message": "Google account email was not provided."}, status=status.HTTP_400_BAD_REQUEST)
         if not email_verified:
             return Response({"message": "Google account email is not verified."}, status=status.HTTP_403_FORBIDDEN)
-
-        # Validate user role
-        if role not in ['Client', 'Vendor']:
-            return Response({"message": "Invalid user role. Must be 'Client' or 'Vendor'."}, status=status.HTTP_400_BAD_REQUEST)
 
         # Check if user exists or create new user
         user, created = User.objects.get_or_create(email=email, defaults={
@@ -302,6 +311,7 @@ def GoogleLogin(request):
         return Response({"message": "Google Login Failed. Please try again."}, status=status.HTTP_400_BAD_REQUEST)
 
 @api_view(['POST'])
+@throttle_classes([AuthEndpointThrottle])
 def ActivateAccount(request):
     if request.method == 'POST':
         email = request.data.get("email", "").lower()
@@ -342,6 +352,7 @@ def ActivateAccount(request):
     return Response({"message": "Method not allowed"}, status=status.HTTP_405_METHOD_NOT_ALLOWED)
 
 @api_view(['POST'])
+@throttle_classes([AuthEndpointThrottle])
 def Login(request):
     if request.method == 'POST':
         try:
@@ -756,6 +767,7 @@ def ReActivateAccount(request):
     return Response({"message": "Method not allowed"}, status=status.HTTP_405_METHOD_NOT_ALLOWED)
 
 @api_view(['POST'])
+@throttle_classes([AuthEndpointThrottle])
 @permission_classes([IsAuthenticated])
 def ChangePassword(request):
     user = request.user
@@ -794,6 +806,7 @@ def ChangePassword(request):
     return Response({"message": "Password changed successfully. Please log in again."}, status=status.HTTP_200_OK)
 
 @api_view(['POST'])
+@throttle_classes([AuthEndpointThrottle])
 def ForgotPassword(request):
     email = (request.data.get('email') or '').strip().lower()
 
@@ -846,6 +859,7 @@ def ForgotPassword(request):
     return Response({"message": "If the email is associated with an account, a password reset OTP has been sent."}, status=status.HTTP_200_OK)
 
 @api_view(['POST'])
+@throttle_classes([AuthEndpointThrottle])
 def ResetPassword(request):
     email = request.data.get('email')
     otp = request.data.get('otp')
@@ -898,6 +912,7 @@ def ResetPassword(request):
     return Response({"message": "Password reset successfully. Please log in with your new password."}, status=status.HTTP_200_OK)
 
 @api_view(['POST'])
+@throttle_classes([AuthEndpointThrottle])
 def ResendOTP(request):
     try:
         email = (request.data.get('email') or '').strip().lower()
@@ -3055,6 +3070,7 @@ def updateItemSubscription(request):
         return Response({"message": f"Error updating subscription package: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
 
 @api_view(['GET'])
+@permission_classes([IsAuthenticated])
 def getSubscriptionStats(request):
     """
     Returns statistics about items and their subscription packages.
