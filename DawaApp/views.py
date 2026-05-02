@@ -181,7 +181,7 @@ def Register(request):
 def GoogleLogin(request):
     try:
         google_token = request.data.get('google_token')
-        role = request.data.get('role', 'Client')
+        role = request.data.get('role') or request.data.get('user_role') or 'Client'
 
         if not google_token:
             return Response({"message": "Google token is required."}, status=status.HTTP_400_BAD_REQUEST)
@@ -207,6 +207,12 @@ def GoogleLogin(request):
         first_name = id_info.get('given_name', '')
         last_name = id_info.get('family_name', '')
         google_profile_picture = id_info.get('picture', None)
+        email_verified = id_info.get('email_verified', False)
+
+        if not email:
+            return Response({"message": "Google account email was not provided."}, status=status.HTTP_400_BAD_REQUEST)
+        if not email_verified:
+            return Response({"message": "Google account email is not verified."}, status=status.HTTP_403_FORBIDDEN)
 
         # Validate user role
         if role not in ['Client', 'Vendor']:
@@ -291,8 +297,9 @@ def GoogleLogin(request):
         status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
         return Response({"message": "Google Login Successful", "user_data": combined_data}, status=status_code)
 
-    except Exception as e:
-        return Response({"message": f"Google Login Failed: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+    except Exception:
+        logger.exception("Google login failed unexpectedly.")
+        return Response({"message": "Google Login Failed. Please try again."}, status=status.HTTP_400_BAD_REQUEST)
 
 @api_view(['POST'])
 def ActivateAccount(request):
@@ -339,8 +346,11 @@ def Login(request):
     if request.method == 'POST':
         try:
             # Get email and password from request
-            email = request.data.get('username')
+            email = (request.data.get('username') or '').strip().lower()
             password = request.data.get('password')
+
+            if not email or not password:
+                return Response({"message": "Username/email and password are required."}, status=status.HTTP_400_BAD_REQUEST)
 
             # Check if user exists
             try:
@@ -350,6 +360,11 @@ def Login(request):
 
             # Check if password is correct
             if not user.check_password(password):
+                if user.has_usable_password() is False:
+                    return Response(
+                        {"message": "This account uses Google sign-in. Please continue with Google."},
+                        status=status.HTTP_401_UNAUTHORIZED
+                    )
                 return Response({"message": "Invalid password."}, status=status.HTTP_401_UNAUTHORIZED)
 
             # Check if user is active
@@ -367,9 +382,10 @@ def Login(request):
 
             _, token = AuthToken.objects.create(user, expiry=None)
 
-            # Get user profile details
-            role = user.userprofile.role
-            profile_picture = user.userprofile.profile_picture or None
+            # Get user profile details (self-heal if missing)
+            user_profile, _ = UserProfile.objects.get_or_create(user=user, defaults={"role": "Client"})
+            role = user_profile.role
+            profile_picture = user_profile.profile_picture or None
 
             # Prepare response data
             combined_data = {
@@ -394,8 +410,9 @@ def Login(request):
 
             return Response({"message": "Logged In Successfully", "user_data": combined_data}, status=status.HTTP_200_OK)
 
-        except Exception as e:
-            return Response({"message": f"Login failed: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception:
+            logger.exception("Login failed unexpectedly.")
+            return Response({"message": "Login failed. Please try again."}, status=status.HTTP_400_BAD_REQUEST)
 
     return Response({"message": "Method not allowed"}, status=status.HTTP_405_METHOD_NOT_ALLOWED)
 
@@ -778,52 +795,52 @@ def ChangePassword(request):
 
 @api_view(['POST'])
 def ForgotPassword(request):
-    email = request.data.get('email')
+    email = (request.data.get('email') or '').strip().lower()
 
     if not email:
         return Response({"message": "Email is required."}, status=status.HTTP_400_BAD_REQUEST)
 
-    # Check if user exists
-    user = get_object_or_404(User, email=email)
+    user = User.objects.filter(email=email).first()
+    user_profile = UserProfile.objects.filter(user=user).first() if user else None
 
-    # Generate OTP and expiry
-    otp_code = ''.join(secrets.choice('0123456789') for _ in range(6))
-    otp_validity_minutes = 10  # Set OTP validity period
+    if user and user_profile:
+        # Generate OTP and expiry
+        otp_code = ''.join(secrets.choice('0123456789') for _ in range(6))
+        otp_validity_minutes = 10  # Set OTP validity period
 
-    # Save OTP and expiry to UserProfile
-    user_profile = UserProfile.objects.get(user=user)
-    user_profile.otp_code = otp_code
-    user_profile.otp_created_at = timezone.now()
-    user_profile.save()
+        # Save OTP and expiry to UserProfile
+        user_profile.otp_code = otp_code
+        user_profile.otp_created_at = timezone.now()
+        user_profile.save()
 
-    # Send OTP via email
-    otp_message = (
-        f"Dear {user.first_name} {user.last_name},\n\n"
-        f"We received a request to reset your password for your Dawa account. "
-        f"Please use the following One-Time PIN (OTP) to proceed with resetting your password:\n\n"
-        f"OTP: {otp_code}\n\n"
-        f"This OTP is valid for {otp_validity_minutes} minutes. If you did not request a password reset, "
-        f"please ignore this email or contact our support team immediately at support@dawa.com.\n\n"
-        f"Thank you for using Dawa.\n\n"
-        f"Best regards,\n"
-        f"Dawa Support Team\n"
-    )
+        # Send OTP via email
+        otp_message = (
+            f"Dear {user.first_name} {user.last_name},\n\n"
+            f"We received a request to reset your password for your Dawa account. "
+            f"Please use the following One-Time PIN (OTP) to proceed with resetting your password:\n\n"
+            f"OTP: {otp_code}\n\n"
+            f"This OTP is valid for {otp_validity_minutes} minutes. If you did not request a password reset, "
+            f"please ignore this email or contact our support team immediately at support@dawa.com.\n\n"
+            f"Thank you for using Dawa.\n\n"
+            f"Best regards,\n"
+            f"Dawa Support Team\n"
+        )
 
-    otp_email = EmailMessage(
-        subject="Your Dawa Password Reset OTP",
-        body=otp_message,
-        from_email=settings.EMAIL_HOST_USER,
-        to=[email]
-    )
-    otp_email.send(fail_silently=False)
+        otp_email = EmailMessage(
+            subject="Your Dawa Password Reset OTP",
+            body=otp_message,
+            from_email=settings.EMAIL_HOST_USER,
+            to=[email]
+        )
+        otp_email.send(fail_silently=False)
 
-    # Log password reset request
-    ActivityLog.objects.create(
-        user=user,
-        action="User requested password reset OTP",
-        ip_address=request.META.get('HTTP_X_FORWARDED_FOR', '').split(',')[0] or request.META.get('REMOTE_ADDR'),
-        user_agent=request.META.get('HTTP_USER_AGENT')
-    )
+        # Log password reset request
+        ActivityLog.objects.create(
+            user=user,
+            action="User requested password reset OTP",
+            ip_address=request.META.get('HTTP_X_FORWARDED_FOR', '').split(',')[0] or request.META.get('REMOTE_ADDR'),
+            user_agent=request.META.get('HTTP_USER_AGENT')
+        )
 
     # Generic response to avoid exposing whether an email exists
     return Response({"message": "If the email is associated with an account, a password reset OTP has been sent."}, status=status.HTTP_200_OK)
@@ -883,7 +900,7 @@ def ResetPassword(request):
 @api_view(['POST'])
 def ResendOTP(request):
     try:
-        email = request.data.get('email')
+        email = (request.data.get('email') or '').strip().lower()
         purpose = request.data.get('purpose')  # 'forgot_password', 'activate', or 'reactivate'
 
         if not email or not purpose:
@@ -892,9 +909,12 @@ def ResendOTP(request):
         if purpose not in ['forgot_password', 'activate', 'reactivate']:
             return Response({"message": "Invalid purpose. Use 'forgot_password', 'activate', or 'reactivate'."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Fetch the user and user profile
-        user = get_object_or_404(User, email=email)
-        user_profile = get_object_or_404(UserProfile, user=user)
+        # Fetch the user and user profile (do not reveal if account exists)
+        user = User.objects.filter(email=email).first()
+        user_profile = UserProfile.objects.filter(user=user).first() if user else None
+
+        if not user or not user_profile:
+            return Response({"message": f"OTP for {purpose} resent successfully."}, status=status.HTTP_200_OK)
 
         # Generate a new OTP
         otp_code = ''.join(random.choices('0123456789', k=6))
@@ -941,8 +961,9 @@ def ResendOTP(request):
 
         return Response({"message": f"OTP for {purpose} resent successfully."}, status=status.HTTP_200_OK)
 
-    except Exception as e:
-        return Response({"message": f"Error processing request: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+    except Exception:
+        logger.exception("Resend OTP failed unexpectedly.")
+        return Response({"message": "Error processing request."}, status=status.HTTP_400_BAD_REQUEST)
 
 #STOPPED HERE FOR ACTIVITY LOGS
 
