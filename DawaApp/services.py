@@ -2,8 +2,6 @@ import os
 import json
 import logging
 
-from google import genai
-from google.genai import types
 from django.conf import settings
 
 logger = logging.getLogger(__name__)
@@ -59,6 +57,16 @@ def check_message_safety(message_text: str) -> dict:
 
     raw_text = ""
     try:
+        try:
+            from google import genai
+            from google.genai import types
+        except ImportError:
+            logger.error(
+                "google-genai package is not installed. "
+                "Add 'google-genai' to requirements.txt and redeploy."
+            )
+            return {"is_safe": True, "reason": "Safety check skipped: google-genai not installed."}
+
         client = genai.Client(api_key=api_key)
 
         prompt = SAFETY_PROMPT_TEMPLATE.format(message=message_text)
