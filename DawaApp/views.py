@@ -23,6 +23,7 @@ from google.oauth2.id_token import verify_oauth2_token
 from google.auth.transport.requests import Request
 from cloudinary.utils import cloudinary_url
 from rest_framework.parsers import MultiPartParser, FormParser
+from .services import check_message_safety
 from django.utils.text import slugify
 from collections import defaultdict
 from django.contrib.auth.hashers import check_password
@@ -618,6 +619,8 @@ def GetShopProfile(request):
                 "images": images,
                 "created_at": item.created_at,
                 "updated_at": item.updated_at,
+                # Public shop list is already filtered to Approved; include for consistent client UX
+                "approval_status": item.approval_status,
             }
 
             # Append item data to the list
@@ -1611,12 +1614,22 @@ def SendMessage(request):
             chat = Chat.objects.create(item=item)
             chat.participants.add(user, receiver)
 
+        # Run AI safety check before delivering the message
+        message_text = data.get('message', '')
+        safety_result = check_message_safety(message_text)
+        if not safety_result["is_safe"]:
+            return Response({
+                "error": "Your message was flagged as unsafe and could not be sent.",
+                "reason": safety_result["reason"],
+                "status": status.HTTP_400_BAD_REQUEST
+            }, status=status.HTTP_400_BAD_REQUEST)
+
         # Create the message
         message_instance = Message.objects.create(
             chat=chat,
             sender=user,
             receiver=receiver,
-            message=data.get('message')
+            message=message_text
         )
 
         # Send email notification to receiver
