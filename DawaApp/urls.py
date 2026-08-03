@@ -76,4 +76,7 @@ urlpatterns = [
     # Subscription management
     path('updateitemsubscription/', views.updateItemSubscription),
     path('subscriptionstats/', views.getSubscriptionStats),
+
+    # Admin: message safety purge
+    path('admin/purge-unsafe-messages/', views.PurgeUnsafeMessages),
 ]

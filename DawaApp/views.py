@@ -23,7 +23,7 @@ from google.oauth2.id_token import verify_oauth2_token
 from google.auth.transport.requests import Request
 from cloudinary.utils import cloudinary_url
 from rest_framework.parsers import MultiPartParser, FormParser
-from .services import check_message_safety
+from .services import check_message_safety, moderate_message
 from django.utils.text import slugify
 from collections import defaultdict
 from django.contrib.auth.hashers import check_password
@@ -1614,13 +1614,15 @@ def SendMessage(request):
             chat = Chat.objects.create(item=item)
             chat.participants.add(user, receiver)
 
-        # Run AI safety check before delivering the message
+        # Layered moderation: local prescreen (instant) + Gemini AI check.
+        # Fails CLOSED — if we can't verify, the message is rejected, never saved.
         message_text = data.get('message', '')
-        safety_result = check_message_safety(message_text)
+        safety_result = moderate_message(message_text, use_ai=True)
         if not safety_result["is_safe"]:
             return Response({
                 "error": "Your message was flagged as unsafe and could not be sent.",
                 "reason": safety_result["reason"],
+                "layer": safety_result.get("layer", "unknown"),
                 "status": status.HTTP_400_BAD_REQUEST
             }, status=status.HTTP_400_BAD_REQUEST)
 
@@ -3169,6 +3171,140 @@ def getSubscriptionStats(request):
         return Response({"error": str(e), "message": "Error fetching subscription statistics."}, status=status.HTTP_400_BAD_REQUEST)
 
 
+# ---------------------------------------------------------------------------
+# Admin: purge unsafe messages
+# ---------------------------------------------------------------------------
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def PurgeUnsafeMessages(request):
+    """
+    Admin-only endpoint that scans all existing chat messages with Gemini
+    and deletes any that are flagged as unsafe.
 
+    POST body (all optional):
+      {
+        "dry_run": true,          // default true — set false to actually delete
+        "batch_size": 15,         // messages per Gemini call
+        "cleanup_empty_chats": false
+      }
 
+    Returns a summary of what was (or would be) deleted.
+    """
+    from .services import check_messages_batch, local_prescreen
+    from django.db.models import Count as DjCount
+
+    user = request.user
+    if not hasattr(user, 'userprofile') or user.userprofile.role != 'Admin':
+        return Response({"error": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+    dry_run = request.data.get("dry_run", True)
+    batch_size = int(request.data.get("batch_size", 15))
+    cleanup_empty_chats = bool(request.data.get("cleanup_empty_chats", False))
+    strict = bool(request.data.get("strict", False))
+
+    try:
+        all_messages = list(
+            Message.objects.only("id", "message", "chat_id", "sender_id", "receiver_id")
+            .order_by("-created_at")
+        )
+        total = len(all_messages)
+
+        unsafe_ids = []
+        safe_count = 0
+        skipped_count = 0
+        api_error_count = 0
+        results_log = []
+
+        batches = [all_messages[i:i + batch_size] for i in range(0, total, batch_size)]
+
+        for batch in batches:
+            # Layer 1 — local prescreen (offline, instant).
+            results_map = {}
+            api_payload = []
+            for m in batch:
+                text = (m.message or "").strip()
+                local = local_prescreen(text)
+                if local["matched"]:
+                    results_map[m.id] = {
+                        "id": m.id,
+                        "is_safe": local["is_safe"],
+                        "reason": local["reason"],
+                    }
+                else:
+                    api_payload.append({"id": m.id, "text": text})
+
+            if api_payload:
+                batch_results = check_messages_batch(api_payload)
+                for r in batch_results:
+                    results_map[r["id"]] = r
+
+            for msg in batch:
+                r = results_map.get(msg.id, {"is_safe": True, "reason": "No result."})
+                is_safe = r.get("is_safe", True)
+                reason = r.get("reason", "")
+                api_error = reason.startswith("API_ERROR:")
+                ai_inconclusive = (
+                    not api_error and (
+                        reason.lower().startswith("skipped")
+                        or "parse error" in reason.lower()
+                    )
+                )
+
+                if api_error:
+                    api_error_count += 1
+                    skipped_count += 1
+                elif ai_inconclusive and strict:
+                    unsafe_ids.append(msg.id)
+                    results_log.append({
+                        "id": msg.id,
+                        "chat_id": msg.chat_id,
+                        "reason": f"[strict] {reason}",
+                        "preview": (msg.message or "")[:80],
+                    })
+                elif ai_inconclusive:
+                    skipped_count += 1
+                elif is_safe:
+                    safe_count += 1
+                else:
+                    unsafe_ids.append(msg.id)
+                    results_log.append({
+                        "id": msg.id,
+                        "chat_id": msg.chat_id,
+                        "reason": reason,
+                        "preview": (msg.message or "")[:80],
+                    })
+
+        deleted_count = 0
+        deleted_chats = []
+
+        # Safety guard: never delete when the AI never actually ran.
+        api_wipeout = api_error_count > 0 and safe_count == 0 and (
+            len(unsafe_ids) == api_error_count if strict else False
+        )
+
+        if not dry_run and unsafe_ids and not api_wipeout:
+            deleted_count, _ = Message.objects.filter(id__in=unsafe_ids).delete()
+
+            if cleanup_empty_chats:
+                empty_chats = Chat.objects.annotate(mc=DjCount("messages")).filter(mc=0)
+                deleted_chats = list(empty_chats.values_list("id", flat=True))
+                if deleted_chats:
+                    Chat.objects.filter(id__in=deleted_chats).delete()
+
+        return Response({
+            "dry_run": dry_run,
+            "strict": strict,
+            "total_scanned": total,
+            "safe": safe_count,
+            "unsafe": len(unsafe_ids),
+            "skipped": skipped_count,
+            "api_errors": api_error_count,
+            "api_wipeout_aborted": bool(not dry_run and unsafe_ids and api_wipeout),
+            "deleted_messages": deleted_count,
+            "deleted_chats": deleted_chats,
+            "unsafe_messages": results_log,
+        }, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
