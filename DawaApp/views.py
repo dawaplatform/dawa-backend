@@ -1279,6 +1279,31 @@ def UpdateItem(request):
             item.item_subcategory_id = data.get('item_subcategory_id')
             updated_fields.append("subcategory")
 
+        # Content-relevant edits on a Rejected listing => resubmit for auto review.
+        # Also re-arm the pipeline on a Pending listing that already reached a
+        # terminal moderation state (needs_review / failed) so the seller's fix
+        # is actually re-checked instead of parking behind stale metadata.
+        _CONTENT_FIELDS = {"name", "description", "subcategory", "images"}
+        content_touched = bool(_CONTENT_FIELDS.intersection(updated_fields)) or bool(
+            request.FILES.getlist('images')
+        )
+        md = dict(item.metadata) if isinstance(item.metadata, dict) else {}
+        stale_moderation = md.get("moderation_state") in {"rejected", "failed", "needs_review"} or md.get("needs_review") is True
+        if content_touched and (item.approval_status == "Rejected" or stale_moderation):
+            item.approval_status = "Pending"
+            item.rejection_reason = None
+            for key in (
+                "needs_review",
+                "moderation_state",
+                "moderation_reason",
+                "moderation_error",
+                "moderation_scores",
+                "moderation_decided_at",
+            ):
+                md.pop(key, None)
+            item.metadata = md or None
+            updated_fields.append("resubmitted for review")
+
         # Save updated item
         item.save()
 

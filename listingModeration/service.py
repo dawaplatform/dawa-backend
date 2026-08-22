@@ -70,6 +70,30 @@ def load_pending_batch(limit: int) -> list[ModerationRow]:
     return rows
 
 
+def load_row_for_item(item_id: int) -> Optional[ModerationRow]:
+    """Snapshot a single Item for the pipeline, or None if it's no longer pending."""
+    try:
+        item = (
+            Item.objects.select_related("seller")
+            .prefetch_related("images")
+            .get(pk=item_id)
+        )
+    except Item.DoesNotExist:
+        return None
+    if item.approval_status != "Pending":
+        return None
+    image_urls = [img.image for img in item.images.all() if img.image]
+    seller = getattr(item, "seller", None)
+    return ModerationRow(
+        item_id=item.id,
+        seller_id=seller.id if seller else None,
+        seller_email=(seller.email or None) if seller else None,
+        title=item.item_name or "",
+        description=item.item_description or "",
+        image_urls=image_urls,
+    )
+
+
 def write_decision(item_id: int, decision: ModerationDecision) -> Optional[Item]:
     """Persist a pipeline decision back onto the `Item`.
 
