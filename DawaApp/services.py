@@ -23,17 +23,42 @@ SAFETY_FAIL_CLOSED = str(
 # Layer 1 — local, offline prescreen (free, instant, no API calls)
 # ---------------------------------------------------------------------------
 # Catches the obvious cases so we don't burn Gemini quota (5 RPM on free tier)
-# on things any keyword filter can flag. English + common Swahili terms since
-# Dawa is a Ugandan/EA marketplace.
+# on things any keyword filter can flag. Profanity detection is delegated to
+# `better-profanity` (Aho-Corasick, microseconds per check, ~4k built-in
+# English words) plus a short local extension for common Swahili / Luganda
+# insults. Scam / off-platform payment / harassment patterns stay as regex.
 
-_LOCAL_PROFANITY = {
-    # English
-    "fuck", "fucker", "fucking", "shit", "bitch", "asshole", "bastard", "dick",
-    "pussy", "cunt", "whore", "slut", "motherfucker", "nigger", "nigga", "faggot",
-    "retard", "rape", "rapist",
-    # Swahili / Luganda common insults
+# Swahili / Luganda insults common on East-African marketplaces. Extends the
+# library's default English list. Kept in code (not the DB) because these
+# are policy, not data.
+_EXTRA_PROFANITY_WORDS: tuple[str, ...] = (
     "malaya", "mshenzi", "punda", "mjinga", "kumamako", "mavi", "shoga",
-}
+)
+
+_BETTER_PROFANITY_READY = False
+_better_profanity_check = None  # callable(text) -> bool
+
+
+def _ensure_better_profanity() -> None:
+    """Import + prime `better-profanity` once per process.
+
+    Best-effort: if the wheel isn't installed we log once and fall back to
+    "no profanity signal from the local layer" — the AI layer still runs.
+    """
+    global _BETTER_PROFANITY_READY, _better_profanity_check
+    if _BETTER_PROFANITY_READY:
+        return
+    _BETTER_PROFANITY_READY = True  # set first so we don't retry every call
+    try:
+        from better_profanity import profanity as _bp
+
+        _bp.load_censor_words()
+        _bp.add_censor_words(list(_EXTRA_PROFANITY_WORDS))
+        _better_profanity_check = _bp.contains_profanity
+    except Exception as exc:  # pragma: no cover - optional dependency
+        logger.info("better-profanity unavailable; local profanity tier disabled: %s", exc)
+        _better_profanity_check = None
+
 
 # Regex patterns for scams / off-platform payment / harassment.
 # Anything matching here is treated as unsafe by the local prescreen.
@@ -75,17 +100,18 @@ def local_prescreen(text: str) -> dict:
     if not body:
         return {"is_safe": False, "reason": "Empty message body.", "matched": True}
 
-    lower = body.lower()
-
-    # Word-boundary profanity check (avoid false positives like "class" ≠ "ass").
-    tokens = re.findall(r"[a-zA-ZÀ-ÿ']+", lower)
-    for word in tokens:
-        if word in _LOCAL_PROFANITY:
-            return {
-                "is_safe": False,
-                "reason": f"Local filter matched profanity: {word!r}.",
-                "matched": True,
-            }
+    # Fast profanity check via better-profanity (Aho-Corasick).
+    _ensure_better_profanity()
+    if _better_profanity_check is not None:
+        try:
+            if _better_profanity_check(body):
+                return {
+                    "is_safe": False,
+                    "reason": "Message contains profanity or an offensive term.",
+                    "matched": True,
+                }
+        except Exception as exc:
+            logger.warning("better-profanity check failed: %s", exc)
 
     for pattern in _LOCAL_SCAM_PATTERNS:
         m = pattern.search(body)

@@ -72,7 +72,8 @@ INSTALLED_APPS = [
     'cloudinary_storage',
 
     # Your apps
-    'DawaApp'
+    'DawaApp',
+    'listingModeration.apps.ListingModerationConfig',
 ]
 
 MIDDLEWARE = [
