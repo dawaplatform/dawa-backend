@@ -554,6 +554,10 @@ def GetMyShopProfile(request):
                 "created_at": item.created_at,
                 "updated_at": item.updated_at,
                 "approval_status": item.approval_status,
+                "rejection_reason": item.rejection_reason,
+                # Owner-only: expose the auto-moderation notes so the seller can
+                # see the friendly reason and improvement tips in their shop.
+                "metadata": item.metadata,
             }
 
             # Append item data to the list
