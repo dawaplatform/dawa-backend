@@ -1,4 +1,6 @@
 from django.utils import timezone
+from django.core.cache import cache
+from feed.service import version as feed_version
 from datetime import timedelta
 from rest_framework import status
 from rest_framework.response import Response
@@ -24,14 +26,15 @@ from google.auth.transport.requests import Request
 from cloudinary.utils import cloudinary_url
 from rest_framework.parsers import MultiPartParser, FormParser
 from .services import check_message_safety, moderate_message
+from .image_validation import prepare_listing_images, RejectedImage
 from django.utils.text import slugify
 from collections import defaultdict
 from django.contrib.auth.hashers import check_password
 from rest_framework.pagination import LimitOffsetPagination
 from django.contrib.postgres.search import TrigramSimilarity
 import secrets
-from django.db.models import Count, Prefetch, Sum
-from django.db.models.functions import TruncDate
+from django.db.models import Count, F, Prefetch, Sum, Window
+from django.db.models.functions import Coalesce, RowNumber, TruncDate
 import logging
 
 from .throttles import AuthEndpointThrottle
@@ -989,9 +992,32 @@ def ResendOTP(request):
 
 #STOPPED HERE FOR ACTIVITY LOGS
 
+COVERS_PER_SUBCATEGORY = 3
+COVERS_PER_CATEGORY = 8
+
+
+def rejected_images_response(rejected: list[RejectedImage]):
+    names = "; ".join(f"{r.name}: {r.reason}" for r in rejected)
+    return Response(
+        {
+            "error": "Some photos were rejected",
+            "message": names,
+            "failed_images": [{"name": r.name, "reason": r.reason} for r in rejected],
+        },
+        status=status.HTTP_400_BAD_REQUEST,
+    )
+
 @api_view(['GET'])
 def GetCategoriesWithSubcategories(request):
     try:
+        # Counts and covers only change when listings change; the feed bumps this version on item save.
+        cache_key = f'categories:v{feed_version()}'
+        payload = cache.get(cache_key)
+        if payload is not None:
+            response = Response(payload)
+            response['Cache-Control'] = 'public, max-age=60'
+            return response
+
         approved_item_filter = Q(item__approval_status='Approved')
         subcategories = (
             SubCategory.objects
@@ -1013,12 +1039,46 @@ def GetCategoriesWithSubcategories(request):
             .order_by('category_name')
         )
 
+        # Fallback icons: a few recent photos per subcategory, interleaved so a category's
+        # list cycles through different subcategories (clients rotate through it).
+        sub_field = 'item__item_subcategory_id'
+        cat_field = 'item__item_subcategory__subcategory_category_id'
+        ranked_images = (
+            ItemImage.objects
+            .filter(item__approval_status='Approved', image__isnull=False)
+            .exclude(image='')
+            .annotate(
+                rn=Window(
+                    RowNumber(),
+                    partition_by=F(sub_field),
+                    order_by=[F('item__created_at').desc(nulls_last=True), F('id').asc()],
+                )
+            )
+            .filter(rn__lte=COVERS_PER_SUBCATEGORY)
+            .order_by(cat_field, sub_field, 'rn')
+            .values_list(cat_field, sub_field, 'image')
+        )
+        by_sub = defaultdict(list)
+        subs_by_cat = defaultdict(list)
+        for cat_id, sub_id, url in ranked_images:
+            if sub_id not in by_sub:
+                subs_by_cat[cat_id].append(sub_id)
+            by_sub[sub_id].append(url)
+        category_covers = {}
+        for cat_id, sub_ids in subs_by_cat.items():
+            lists = [by_sub[s] for s in sub_ids]
+            category_covers[cat_id] = [
+                lst[i] for i in range(COVERS_PER_SUBCATEGORY) for lst in lists if i < len(lst)
+            ][:COVERS_PER_CATEGORY]
+
         result = [
             {
                 'id': category.id,
                 'category_name': category.category_name,
                 'category_item_count': category.category_item_count,
                 'image_url': category.image_url,
+                'cover_image_url': (category_covers.get(category.id) or [None])[0],
+                'cover_image_urls': category_covers.get(category.id, []),
                 'subcategories': [
                     {
                         'id': subcategory.id,
@@ -1026,6 +1086,8 @@ def GetCategoriesWithSubcategories(request):
                         'subcategory_item_count': subcategory.subcategory_item_count,
                         'metadata': subcategory.metadata,
                         'image_url': subcategory.image_url,
+                        'cover_image_url': (by_sub.get(subcategory.id) or [None])[0],
+                        'cover_image_urls': by_sub.get(subcategory.id, []),
                     }
                     for subcategory in category.prefetched_subcategories
                 ],
@@ -1033,7 +1095,11 @@ def GetCategoriesWithSubcategories(request):
             for category in categories
         ]
 
-        return Response({"data": result, "status": status.HTTP_200_OK})
+        payload = {"data": result, "status": status.HTTP_200_OK}
+        cache.set(cache_key, payload, 60)
+        response = Response(payload)
+        response['Cache-Control'] = 'public, max-age=60'
+        return response
 
     except Exception as e:
         return Response({"error": str(e), "status": status.HTTP_400_BAD_REQUEST})
@@ -1082,6 +1148,11 @@ def AddItem(request):
                 "status": status.HTTP_400_BAD_REQUEST
             })
 
+        # Reject bad photos before creating anything, so a failed post leaves no half-made listing.
+        prepared_images, rejected_images = prepare_listing_images(request.FILES.getlist('images'))
+        if rejected_images:
+            return rejected_images_response(rejected_images)
+
         # Handle metadata (optional field)
         metadata = data.get('metadata', None)
         # If you want to ensure it's a dict, try to parse JSON if it's a string
@@ -1117,8 +1188,7 @@ def AddItem(request):
         )
 
         # Process images
-        images = request.FILES.getlist('images')
-        if not images:
+        if not prepared_images:
             # Item created successfully but no images were provided
             user_fullname = f"{request.user.first_name} {request.user.last_name}".strip() or request.user.username
             
@@ -1135,35 +1205,13 @@ def AddItem(request):
                 "status": status.HTTP_201_CREATED
             })
         
-        # Validate image formats
-        allowed_formats = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp']
-        max_size = 5 * 1024 * 1024  # 5MB
-        
         failed_images = []
         successful_images = 0
-        
-        for image_file in images:
+
+        for image_file in prepared_images:
             try:
-                # Check file size
-                if image_file.size > max_size:
-                    failed_images.append({
-                        "name": image_file.name,
-                        "reason": f"File too large. Maximum size is 5MB. This file is {image_file.size / (1024 * 1024):.2f}MB"
-                    })
-                    continue
-                
-                # Check file format
-                if hasattr(image_file, 'content_type') and image_file.content_type not in allowed_formats:
-                    failed_images.append({
-                        "name": image_file.name,
-                        "reason": f"Unsupported file format: {image_file.content_type}. Allowed formats are JPEG, PNG, GIF, and WebP"
-                    })
-                    continue
-                
-                # Create the image
                 ItemImage.objects.create(item=item, image=image_file)
                 successful_images += 1
-                
             except Exception as img_error:
                 failed_images.append({
                     "name": image_file.name,
@@ -1231,6 +1279,11 @@ def UpdateItem(request):
         if item.seller != request.user:
             return Response({"error": "You are not authorized to update this item.", "status": status.HTTP_403_FORBIDDEN})
 
+        # Validate new photos up front so a rejected photo doesn't leave a half-applied edit.
+        new_images, rejected_images = prepare_listing_images(request.FILES.getlist('images'))
+        if rejected_images:
+            return rejected_images_response(rejected_images)
+
         # Track changes
         updated_fields = []
 
@@ -1284,9 +1337,7 @@ def UpdateItem(request):
         # terminal moderation state (needs_review / failed) so the seller's fix
         # is actually re-checked instead of parking behind stale metadata.
         _CONTENT_FIELDS = {"name", "description", "subcategory", "images"}
-        content_touched = bool(_CONTENT_FIELDS.intersection(updated_fields)) or bool(
-            request.FILES.getlist('images')
-        )
+        content_touched = bool(_CONTENT_FIELDS.intersection(updated_fields)) or bool(new_images)
         md = dict(item.metadata) if isinstance(item.metadata, dict) else {}
         stale_moderation = md.get("moderation_state") in {"rejected", "failed", "needs_review"} or md.get("needs_review") is True
         if content_touched and (item.approval_status == "Rejected" or stale_moderation):
@@ -1308,9 +1359,8 @@ def UpdateItem(request):
         item.save()
 
         # Process new images if provided
-        images = request.FILES.getlist('images')
-        if images:
-            for image_file in images:
+        if new_images:
+            for image_file in new_images:
                 ItemImage.objects.create(item=item, image=image_file)
             updated_fields.append("images")
 
@@ -1410,6 +1460,9 @@ def GetItemDetails(request):
         # Fetch the specific item
         item_id = request.data.get('item_id')
         item = get_object_or_404(Item, id=item_id, approval_status='Approved')
+        if not (request.user.is_authenticated and request.user.id == item.seller_id):
+            # update() skips post_save, so views don't invalidate the feed cache.
+            Item.objects.filter(pk=item.pk).update(views_count=Coalesce(F('views_count'), 0) + 1)
 
         # Fetch related subcategory and category
         subcategory = item.item_subcategory

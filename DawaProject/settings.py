@@ -74,6 +74,7 @@ INSTALLED_APPS = [
     # Your apps
     'DawaApp',
     'listingModeration.apps.ListingModerationConfig',
+    'feed.apps.FeedConfig',
 ]
 
 MIDDLEWARE = [
