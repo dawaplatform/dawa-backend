@@ -27,6 +27,7 @@ from cloudinary.utils import cloudinary_url
 from rest_framework.parsers import MultiPartParser, FormParser
 from .services import check_message_safety, moderate_message
 from .image_validation import prepare_listing_images, RejectedImage
+from .listing_filters import InvalidFilter, apply_listing_filters
 from django.utils.text import slugify
 from collections import defaultdict
 from django.contrib.auth.hashers import check_password
@@ -1441,6 +1442,11 @@ def GetItems(request):
 
         if subcategory_id:
             items = items.filter(item_subcategory__id=subcategory_id)
+
+        try:
+            items = apply_listing_filters(items, request.data)
+        except InvalidFilter as exc:
+            return Response({"error": str(exc), "message": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         # Apply pagination
         paginator = CustomPagination()
