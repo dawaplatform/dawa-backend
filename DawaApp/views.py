@@ -2640,7 +2640,7 @@ def UpdateCategory(request):
         old_name = category.category_name
         category.category_name = category_name
         if image_url is not None:
-            category.image_url = image_url  # Update image_url if provided
+            category.image_url = image_url or None  # empty string clears the icon
         category.save()
         
         # Log activity
@@ -2834,9 +2834,9 @@ def UpdateSubcategory(request):
         if metadata is not None:
             subcategory.metadata = metadata
 
-        # Update image_url if provided
+        # Update image_url if provided; an empty string clears it
         if image_url is not None:
-            subcategory.image_url = image_url
+            subcategory.image_url = image_url or None
 
         subcategory.save()
         
@@ -2851,7 +2851,7 @@ def UpdateSubcategory(request):
         if metadata is not None and old_metadata != metadata:
             change_log.append(f"metadata from '{old_metadata}' to '{metadata}'")
 
-        if image_url is not None and old_image_url != image_url:
+        if image_url is not None and old_image_url != (image_url or None):
             change_log.append(f"image_url from '{old_image_url}' to '{image_url}'")
         
         changes = ", ".join(change_log) if change_log else "no changes"
