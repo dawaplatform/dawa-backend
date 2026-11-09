@@ -34,6 +34,20 @@ EMAIL_USE_TLS=os.getenv('EMAIL_USE_TLS') == 'True'
 
 ADMIN_EMAIL=os.getenv('ADMIN_EMAIL')
 
+# Pesapal (PESAPAL_ENV: "sandbox" or "production")
+PESAPAL_ENV = os.getenv('PESAPAL_ENV', 'sandbox')
+PESAPAL_API_URL = (
+    os.getenv('PRODUCTION_PESAPAL_API_URL', 'https://pay.pesapal.com/v3')
+    if PESAPAL_ENV == 'production'
+    else os.getenv('DEVELOPMENT_PESAPAL_API_URL', 'https://cybqa.pesapal.com/pesapalv3')
+)
+PESAPAL_CONSUMER_KEY = os.getenv('CONSUMER_KEY')
+PESAPAL_CONSUMER_SECRET = os.getenv('CONSUMER_SECRET')
+PESAPAL_IPN_ID = os.getenv('PESAPAL_IPN_ID')
+PESAPAL_IPN_URL = os.getenv('PESAPAL_IPN_URL', 'https://api.dawa.ug/api/payments/pesapal/ipn/')
+PESAPAL_CALLBACK_URL = os.getenv('PESAPAL_CALLBACK_URL', 'https://api.dawa.ug/api/payments/pesapal/callback/')
+PESAPAL_RESULT_URL = os.getenv('PESAPAL_RESULT_URL', 'https://dawa.ug/payments/result')
+
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.1/howto/deployment/checklist/
 
@@ -75,6 +89,7 @@ INSTALLED_APPS = [
     'DawaApp',
     'listingModeration.apps.ListingModerationConfig',
     'feed.apps.FeedConfig',
+    'payments.apps.PaymentsConfig',
 ]
 
 MIDDLEWARE = [
